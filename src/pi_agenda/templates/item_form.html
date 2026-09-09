@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{% if item %}Edit{% else %}Add content{% endif %} — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>{% if item %}Edit {{ item.name }}{% else %}Add content{% endif %}</h1><p>All processing runs in the background; the last verified content remains on screen.</p></div></div>
+<form id="item-form" class="panel form-grid" data-item-id="{{ item.id if item else '' }}" enctype="multipart/form-data">
+  <label>Name<input name="name" required maxlength="160" value="{{ item.name if item else '' }}"></label>
+  <label>Content type
+    <select name="type" id="content-type" {% if item %}disabled{% endif %}>
+      {% for value, label in [('ppt_file','PowerPoint file'),('pdf_deck','PDF deck'),('ppt_link','Microsoft 365 PowerPoint link'),('image','Image'),('url','Website'),('video','Video')] %}
+      <option value="{{ value }}" {% if item and item.type == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% if not item %}
+  <label class="span-2" id="file-field">Choose file<input type="file" name="file" accept=".pptx,.pdf,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.mkv,.webm"></label>
+  <label class="span-2 hidden" id="source-field">URL or Microsoft embed code<textarea name="source" rows="4" placeholder="https://…"></textarea></label>
+  {% elif item.type in ('url','ppt_link') %}
+  <label class="span-2">URL<input name="source" type="url" value="{{ item.source }}" required></label>
+  {% endif %}
+  <label>Render mode<select name="render_mode">
+    {% for value in ['auto','live','converted','archive','screenshot'] %}<option value="{{ value }}" {% if item and item.render_mode == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}
+  </select></label>
+  <label>Fit<select name="fit_mode">
+    {% for value in ['contain','cover','stretch'] %}<option value="{{ value }}" {% if item and item.fit_mode == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}
+  </select></label>
+  <label>Item duration (seconds)<input name="duration_sec" type="number" min="0" max="86400" value="{{ item.duration_sec if item else 20 }}"></label>
+  <label>Seconds per slide<input name="slide_sec" type="number" min="1" max="3600" value="{{ item.slide_sec if item else 10 }}"></label>
+  <label>Volume <output id="volume-value">{{ item.volume if item else 80 }}%</output><input name="volume" type="range" min="0" max="100" value="{{ item.volume if item else 80 }}"></label>
+  <label>Enabled<select name="enabled"><option value="1" {% if not item or item.enabled %}selected{% endif %}>Yes</option><option value="0" {% if item and not item.enabled %}selected{% endif %}>No</option></select></label>
+  <fieldset class="span-2"><legend>Days</legend><div class="day-picker">
+    {% for index, day in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}<label><input type="checkbox" name="day" value="{{ index }}" {% if not item or day_enabled(item.days_mask, index) %}checked{% endif %}>{{ day }}</label>{% endfor %}
+  </div></fieldset>
+  <label>Start time (optional)<input name="start_time" type="time" value="{{ item.start_time or '' if item else '' }}"></label>
+  <label>End time (optional)<input name="end_time" type="time" value="{{ item.end_time or '' if item else '' }}"></label>
+  <div class="span-2 form-actions"><a class="button" href="{{ url_for('admin.playlist') }}">Cancel</a><button class="primary" type="submit">{% if item %}Save changes{% else %}Add and process{% endif %}</button></div>
+  <div class="span-2 progress hidden" id="upload-progress"><span></span><output>0%</output></div>
+</form>
+{% if item and item.type in ('ppt_file','pdf_deck','image','video') %}
+<form id="replace-form" class="panel form-grid" data-item-id="{{ item.id }}" enctype="multipart/form-data">
+  <div class="span-2"><h2>Replace source file</h2><p>The current verified version remains active until the replacement finishes processing.</p></div>
+  <label class="span-2">Replacement file<input type="file" name="file" required></label>
+  <div class="span-2 form-actions"><button class="primary" type="submit">Upload replacement</button></div>
+  <div class="span-2 progress hidden"><span></span><output>0%</output></div>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pi-Agenda is starting</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='startup.js') }}" defer></script>
+</head>
+<body class="startup-screen" data-seconds="{{ seconds }}" data-player="{{ url_for('player.player') }}">
+  <main>
+    <div class="startup-logo">Pi-Agenda</div>
+    <h1>Manage this display</h1>
+    <div class="address">http://pi-agenda.local:{{ port }}/admin</div>
+    {% for address in addresses %}<div class="address">http://{{ address }}:{{ port }}/admin</div>{% endfor %}
+    {% if not addresses %}<div class="address pending">Network address pending</div>{% endif %}
+    <p>Management interface · Port {{ port }}</p>
+    <div class="startup-progress"><span></span></div>
+  </main>
+</body>
+</html>

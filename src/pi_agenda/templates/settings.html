@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Settings — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Settings</h1><p>Changing resolution queues safe background re-renders.</p></div></div>
+<form id="settings-form" class="panel form-grid">
+  <label>Site name<input name="site_name" value="{{ settings.site_name }}"></label>
+  <label>Resolution<select name="resolution"><option value="720p" {% if settings.resolution == '720p' %}selected{% endif %}>720p (recommended)</option><option value="1080p" {% if settings.resolution == '1080p' %}selected{% endif %}>1080p (experimental)</option></select></label>
+  <label>Timezone<input name="timezone" value="{{ settings.timezone }}" placeholder="America/Chicago"></label>
+  <label>Daily refresh time<input name="check_time" type="time" value="{{ settings.check_time }}"></label>
+  <label>Default item seconds<input name="default_duration_sec" type="number" min="1" value="{{ settings.default_duration_sec }}"></label>
+  <label>Default slide seconds<input name="default_slide_sec" type="number" min="1" value="{{ settings.default_slide_sec }}"></label>
+  <label>Default volume<input name="default_volume" type="number" min="0" max="100" value="{{ settings.default_volume }}"></label>
+  <label>Boot address screen seconds<input name="boot_splash_seconds" type="number" min="5" max="60" value="{{ settings.boot_splash_seconds }}"></label>
+  <label>Content quota (bytes)<input name="content_quota_bytes" type="number" min="1048576" value="{{ settings.content_quota_bytes }}"></label>
+  <label>Reserved free space (bytes)<input name="minimum_free_bytes" type="number" min="0" value="{{ settings.minimum_free_bytes }}"></label>
+  <label>Remote player access<select name="remote_player_enabled"><option value="0" {% if settings.remote_player_enabled == '0' %}selected{% endif %}>Disabled (recommended)</option><option value="1" {% if settings.remote_player_enabled == '1' %}selected{% endif %}>Device token required</option></select></label>
+  {% if settings.remote_player_enabled == '1' %}<label class="span-2">Remote player device token<input value="{{ player_token }}" readonly autocomplete="off"><small>On the remote display, open <code>/player/connect</code> on this Pi and enter this token. Disable remote access when it is no longer needed.</small></label>{% endif %}
+  <label class="span-2">Allowed private/intranet hostnames <input name="intranet_allowlist" value="{{ settings.intranet_allowlist }}" placeholder="intranet.school.local,10.0.0.25"><small>Comma separated. Only add hosts you trust.</small></label>
+  <div class="span-2 form-actions"><button class="primary" type="submit">Save settings</button></div>
+</form>
+{% endblock %}
