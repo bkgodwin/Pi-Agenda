@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pi-agenda"
+version = "0.1.0"
+description = "Offline-tolerant classroom digital signage for Raspberry Pi"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Pi-Agenda contributors"}]
+dependencies = [
+  "Flask>=3.1,<4",
+  "waitress>=3.0,<4",
+  "bcrypt>=4.2,<6",
+  "Pillow>=11,<13",
+  "requests>=2.32,<3",
+  "beautifulsoup4>=4.13,<5",
+  "psutil>=6.1,<8",
+  "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3,<10",
+  "pytest-cov>=6,<8",
+  "ruff>=0.9,<1",
+]
+
+[project.scripts]
+pi-agenda = "pi_agenda.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pi_agenda = ["templates/*.html", "static/*.css", "static/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

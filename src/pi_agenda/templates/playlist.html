@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Playlist — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Playlist</h1><p>Drag items to change their display order.</p></div><a class="button primary" href="{{ url_for('admin.add_item') }}">Add content</a></div>
+<section class="panel flush">
+  <div id="playlist" class="playlist">
+  {% for item in items %}
+    <article class="playlist-item" draggable="true" data-id="{{ item.id }}">
+      <div class="drag-handle" title="Drag to reorder">⋮⋮</div>
+      {% if item.generation_key %}<img class="item-thumb" width="88" height="52" style="object-fit:cover;border-radius:10px" src="{{ url_for('player.media', item_id=item.id, generation_key=item.generation_key, filename='thumbnail.jpg') }}" alt="">{% else %}<div class="type-icon">{{ item.type[:3]|upper }}</div>{% endif %}
+      <div class="item-main">
+        <h2>{{ item.name }}</h2>
+        <p>{{ item.type|replace('_', ' ') }} · {% if item.generation_kind %}{{ item.generation_kind|replace('_', ' ') }}{% else %}not processed{% endif %}</p>
+        <div class="item-meta"><span>{{ item.duration_sec }}s item</span><span>{{ item.slide_sec }}s/slide</span><span>Volume {{ item.volume }}%</span><span class="badge {{ item.last_status }}">{{ item.last_status }}</span></div>
+        {% if item.last_error %}<p class="error-detail">{{ item.last_error }}</p>{% endif %}
+      </div>
+      <div class="item-actions">
+        <label class="switch"><input type="checkbox" data-action="toggle" {% if item.enabled %}checked{% endif %}><span>Enabled</span></label>
+        <button class="button" data-action="refresh">Refresh</button>
+        <button class="button" data-action="duplicate">Duplicate</button>
+        <a class="button" target="_blank" rel="noopener" href="{{ url_for('admin.preview_item', item_id=item.id) }}">Preview</a>
+        <a class="button" href="{{ url_for('admin.edit_item', item_id=item.id) }}">Edit</a>
+        <button class="button danger" data-action="delete">Delete</button>
+      </div>
+    </article>
+  {% else %}
+    <div class="empty-state"><h2>No content yet</h2><p>Add a presentation, image, website, or video to begin.</p></div>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}

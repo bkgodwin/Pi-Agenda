@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Dashboard</h1><p>Display and system overview</p></div><a class="button primary" href="{{ url_for('admin.add_item') }}">Add content</a></div>
+<section class="metric-grid">
+  <article class="metric"><span>Total items</span><strong>{{ counts.total or 0 }}</strong></article>
+  <article class="metric"><span>Enabled</span><strong>{{ counts.enabled or 0 }}</strong></article>
+  <article class="metric"><span>Errors</span><strong class="{% if counts.errors %}danger-text{% endif %}">{{ counts.errors or 0 }}</strong></article>
+  <article class="metric"><span>Display</span><strong id="display-summary">Checking…</strong></article>
+</section>
+<section class="panel"><div class="section-heading"><h2>Playback</h2><span id="player-heartbeat"></span></div><div class="metric-grid"><article class="metric"><span>Now playing</span><strong id="now-playing">—</strong></article><article class="metric"><span>Up next</span><strong id="up-next">—</strong></article></div></section>
+<section class="panel">
+  <div class="section-heading"><h2>System health</h2><span id="health-updated"></span></div>
+  <div id="system-health" class="health-grid" data-system-status>Loading system status…</div>
+</section>
+<section class="panel">
+  <div class="section-heading"><h2>Recent jobs</h2><button class="button" data-action="refresh-all">Refresh all</button></div>
+  <div class="table-wrap"><table><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Progress</th><th>Started</th></tr></thead><tbody id="jobs-table">
+    {% for job in recent_jobs %}<tr><td>{{ job.id }}</td><td>{{ job.kind }}</td><td><span class="badge {{ job.state }}">{{ job.state }}</span></td><td>{{ job.progress }}% · {{ job.stage }}</td><td>{{ job.started_at or '—' }}</td></tr>{% else %}<tr><td colspan="5">No jobs yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
