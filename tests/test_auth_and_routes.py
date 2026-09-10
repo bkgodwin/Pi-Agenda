@@ -142,7 +142,9 @@ def test_player_heartbeat_and_admin_display_status(authenticated_client):
     assert status.get_json()["data"]["heartbeat"]
 
 
-def test_playlist_etag_changes_immediately_with_scheduled_selection(client, monkeypatch):
+def test_playlist_etag_changes_immediately_with_scheduled_selection(
+    client, monkeypatch
+):
     selection = {"key": "morning"}
 
     def playlist(_conn, *, cache_port):
