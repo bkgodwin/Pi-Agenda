@@ -183,6 +183,25 @@
     xhr.send(data);
   });
 
+  const widgetsForm = document.getElementById("widgets-form");
+  if (widgetsForm) {
+    widgetsForm.querySelectorAll('input[type="range"]').forEach(input => {
+      const output = widgetsForm.querySelector(`output[data-for="${input.name}"]`);
+      const suffix = input.name === "ticker_widget_speed" ? " sec" : " px";
+      input.addEventListener("input", () => { if (output) output.textContent = `${input.value}${suffix}`; });
+    });
+    widgetsForm.addEventListener("submit", event => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(widgetsForm).entries());
+      ["clock_widget_enabled", "progress_widget_enabled", "ticker_widget_enabled"].forEach(name => {
+        data[name] = widgetsForm.elements[name].checked ? "1" : "0";
+      });
+      api("/api/widgets", {method: "PUT", body: JSON.stringify(data)})
+        .then(() => notify("Widgets saved — the display will update within a few seconds"))
+        .catch(error => notify(error.message, true));
+    });
+  }
+
   const playlist = document.getElementById("playlist");
   if (playlist) {
     let dragged = null;
@@ -364,7 +383,7 @@
   }));
   document.querySelectorAll('[data-action="blank-start"],[data-action="blank-stop"]').forEach(button => button.addEventListener("click", () => {
     const start = button.dataset.action === "blank-start";
-    if (start && !window.confirm("Blank and power off the physical display now? Use End test to resume scheduling.")) return;
+    if (start && !window.confirm("Blank the player and turn off the physical HDMI signal now? Use Restore display to resume scheduling.")) return;
     api("/api/display/test-blank", {method: "POST", body: JSON.stringify({state: start ? "start" : "stop"})})
       .then(() => window.location.reload())
       .catch(error => notify(error.message, true));
@@ -418,7 +437,6 @@
     document.querySelector('[data-action="pause-schedule"]')?.classList.toggle("hidden", paused);
     document.querySelector('[data-action="resume-schedule"]')?.classList.toggle("hidden", !paused);
     const forceButton = document.querySelector('[data-action="force-play"]');
-    forceButton?.classList.toggle("hidden", !paused);
     if (forceButton) forceButton.disabled = !paused;
     const forceSelect = document.getElementById("force-play-select");
     if (forceSelect) {
@@ -429,7 +447,9 @@
     document.querySelector('[data-action="blank-stop"]')?.classList.toggle("hidden", !blanked);
     document.getElementById("paused-notice")?.classList.toggle("hidden", !paused);
     const state = document.getElementById("schedule-state");
-    if (state) state.textContent = paused ? (data?.forced_playlist_id ? `Paused · forced #${data.forced_playlist_id}` : "Paused") : (blanked ? "Blanked" : "Scheduled");
+    if (state) state.textContent = blanked ? "Display blanked" : paused ? (data?.forced_playlist_id ? "Forced playlist" : "Paused") : data?.display_on ? "Scheduled · on" : "Scheduled · off";
+    const blankHelp = document.getElementById("blank-help");
+    if (blankHelp) blankHelp.textContent = blanked ? "The HDMI signal is off. Restore it to resume the schedule." : "Turns off the HDMI display signal until you restore it.";
   };
   document.querySelector('[data-action="pause-schedule"]')?.addEventListener("click", () => {
     api("/api/display/pause", {method: "POST", body: "{}"}).then(data => { notify("Schedule paused"); refreshPlaybackUI({schedule_paused: true}); updatePlayback(); }).catch(error => notify(error.message, true));

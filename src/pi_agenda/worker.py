@@ -265,6 +265,10 @@ def run_worker(config: RuntimeConfig) -> None:
     migrate(config.db_path)
     conn = connect(config.db_path)
     recover_interrupted_jobs(conn)
+    # This value describes real hardware and cannot be trusted across an X
+    # session restart or reboot. Reapply and verify the desired state.
+    set_setting(conn, "display_power_state", "unknown")
+    set_setting(conn, "display_power_pending_at", "")
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     last_periodic = 0.0
@@ -280,7 +284,7 @@ def run_worker(config: RuntimeConfig) -> None:
             if now - last_health >= 60:
                 _probe_internet(conn)
                 last_health = now
-            if now - last_power >= 30:
+            if now - last_power >= 2:
                 _apply_power_state(conn)
                 _watchdog_player(conn)
                 last_power = now

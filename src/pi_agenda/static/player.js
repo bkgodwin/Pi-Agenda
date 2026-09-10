@@ -3,6 +3,10 @@
 (() => {
   const stage = document.getElementById("stage");
   const statusDot = document.getElementById("connection-status");
+  const widgetLayer = document.getElementById("widget-layer");
+  const clockWidget = document.getElementById("clock-widget");
+  const tickerWidget = document.getElementById("ticker-widget");
+  const progressWidget = document.getElementById("progress-widget");
   const exitToken = document.querySelector('meta[name="kiosk-exit-token"]')?.content || "";
   let playlist = [];
   let playlistSelection = null;
@@ -12,6 +16,54 @@
   let pollFailures = 0;
   let displayOn = true;
   let currentItemId = null;
+  let widgetConfig = null;
+  let progressWindow = null;
+
+  function updateClockWidget() {
+    if (!clockWidget) return;
+    clockWidget.textContent = new Date().toLocaleTimeString([], {hour: "numeric", minute: "2-digit", hour12: true});
+  }
+
+  function updateProgressWidget() {
+    if (!progressWidget || !progressWindow || !widgetConfig?.progress?.enabled || !displayOn) return;
+    const start = new Date(progressWindow.start).getTime();
+    const end = new Date(progressWindow.end).getTime();
+    const percent = Math.max(0, Math.min(100, (Date.now() - start) / (end - start) * 100));
+    progressWidget.querySelector("span").style.width = `${percent}%`;
+    progressWidget.title = `${progressWindow.playlist_name}: ${Math.round(percent)}% complete`;
+  }
+
+  function renderWidgets() {
+    if (!widgetLayer || !widgetConfig) return;
+    const clockVisible = displayOn && widgetConfig.clock.enabled;
+    const tickerVisible = displayOn && widgetConfig.ticker.enabled && widgetConfig.ticker.text.trim();
+    const progressVisible = displayOn && widgetConfig.progress.enabled && Boolean(progressWindow);
+    widgetLayer.classList.toggle("hidden", !clockVisible && !tickerVisible && !progressVisible);
+
+    clockWidget.className = `screen-clock position-${widgetConfig.clock.position}${clockVisible ? "" : " hidden"}`;
+    clockWidget.style.fontSize = `${widgetConfig.clock.size}px`;
+    updateClockWidget();
+
+    tickerWidget.className = `screen-ticker position-${widgetConfig.ticker.position}${tickerVisible ? "" : " hidden"}`;
+    const tickerText = tickerWidget.querySelector("span");
+    if (tickerText.textContent !== widgetConfig.ticker.text) tickerText.textContent = widgetConfig.ticker.text;
+    tickerText.style.animationDuration = `${widgetConfig.ticker.speed}s`;
+
+    progressWidget.className = `screen-progress position-${widgetConfig.progress.position}${progressVisible ? "" : " hidden"}`;
+    progressWidget.style.height = `${widgetConfig.progress.height}px`;
+    progressWidget.querySelector("span").style.backgroundColor = widgetConfig.progress.color;
+
+    const topProgress = progressVisible && widgetConfig.progress.position === "top" ? widgetConfig.progress.height : 0;
+    const bottomProgress = progressVisible && widgetConfig.progress.position === "bottom" ? widgetConfig.progress.height : 0;
+    const topTicker = tickerVisible && widgetConfig.ticker.position === "top" ? 52 : 0;
+    const bottomTicker = tickerVisible && widgetConfig.ticker.position === "bottom" ? 52 : 0;
+    widgetLayer.style.setProperty("--top-progress", `${topProgress}px`);
+    widgetLayer.style.setProperty("--bottom-progress", `${bottomProgress}px`);
+    widgetLayer.style.setProperty("--top-bands", `${topProgress + topTicker}px`);
+    widgetLayer.style.setProperty("--bottom-bands", `${bottomProgress + bottomTicker}px`);
+    statusDot.style.bottom = `${bottomProgress + bottomTicker + 10}px`;
+    updateProgressWidget();
+  }
 
   function setStatus(level, title) {
     statusDot.className = `connection-status ${level}`;
@@ -38,11 +90,13 @@
     const updateClock = () => { clock.textContent = new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); };
     updateClock();
     currentTimer = window.setInterval(updateClock, 1000);
+    renderWidgets();
   }
 
   function blackout() {
     clearStage();
     currentItemId = null;
+    renderWidgets();
     sendHeartbeat("black", null);
   }
 
@@ -121,6 +175,7 @@
     const item = playlist[index++];
     currentItemId = item.id;
     sendHeartbeat("playing", item.id);
+    renderWidgets();
     if (item.status === "error" || !navigator.onLine) {
       setStatus("amber", `Cached or stale · ${item.last_good_at || "unknown age"}`);
     } else {
@@ -152,6 +207,8 @@
       const data = envelope.data;
       pollFailures = 0;
       displayOn = data.display_on;
+      widgetConfig = data.widgets;
+      progressWindow = data.progress_window;
       if (data.selection_key !== playlistSelection) {
         playlistSelection = data.selection_key;
         playlist = data.items;
@@ -161,6 +218,7 @@
       }
       if (!data.online) setStatus("amber", "Internet unavailable; using verified local content");
       if (!displayOn) blackout();
+      else renderWidgets();
     } catch (error) {
       pollFailures += 1;
       if (pollFailures >= 3) setStatus("amber", "Backend unavailable; continuing cached playlist");
@@ -194,6 +252,8 @@
       .catch(() => setStatus("red", "Could not exit kiosk"));
   });
   fetchPlaylist();
-  window.setInterval(fetchPlaylist, 15000);
+  window.setInterval(fetchPlaylist, 5000);
+  window.setInterval(updateClockWidget, 1000);
+  window.setInterval(updateProgressWidget, 1000);
   window.setInterval(() => sendHeartbeat(displayOn ? "playing" : "black", currentItemId), 30000);
 })();
