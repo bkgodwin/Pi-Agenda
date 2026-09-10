@@ -32,6 +32,7 @@ def test_admin_pages_render(authenticated_client):
         "/admin/playlist",
         "/admin/items/new",
         "/admin/schedules",
+        "/admin/widgets",
         "/admin/settings",
         "/admin/system",
     ):

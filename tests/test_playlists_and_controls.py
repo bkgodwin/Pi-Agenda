@@ -4,7 +4,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
-from pi_agenda.db import connect, migrate, set_setting
+from pi_agenda.db import connect, get_setting, migrate, set_setting
 from pi_agenda.jobs import claim_job, enqueue_job, fail_job
 from pi_agenda.models import create_item
 from pi_agenda.playlist import _render_descriptor, build_playlist
@@ -277,6 +277,63 @@ def test_blank_test_and_holiday_force_display_off(authenticated_client, db):
         authenticated_client.delete("/api/display/holiday", headers=headers).status_code
         == 200
     )
+
+
+def test_widget_settings_and_timed_playlist_progress(authenticated_client, db):
+    set_setting(db, "timezone", "UTC")
+    db.execute("UPDATE display_schedule SET mode = 'always_on' WHERE weekday = 0")
+    playlist_id = create_playlist(
+        db,
+        {
+            "name": "Second period",
+            "days_mask": 1,
+            "start_time": "09:00",
+            "end_time": "10:00",
+        },
+    )
+    item_id = create_item(db, _announcement("Period note", "Work quietly"))
+    assign_item_to_playlists(db, item_id, [playlist_id])
+    response = authenticated_client.put(
+        "/api/widgets",
+        json={
+            "clock_widget_enabled": "1",
+            "clock_widget_position": "top-center",
+            "clock_widget_size": "64",
+            "progress_widget_enabled": "1",
+            "progress_widget_position": "bottom",
+            "progress_widget_height": "10",
+            "progress_widget_color": "#3366cc",
+            "ticker_widget_enabled": "1",
+            "ticker_widget_text": "Bring a pencil",
+            "ticker_widget_speed": "30",
+            "ticker_widget_position": "bottom",
+        },
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
+    assert response.status_code == 200, response.get_json()
+    result = build_playlist(
+        db, cache_port=8002, now_utc=datetime(2026, 9, 7, 9, 30, tzinfo=UTC)
+    )
+    assert result["widgets"]["clock"] == {
+        "enabled": True,
+        "position": "top-center",
+        "size": 64,
+    }
+    assert result["widgets"]["ticker"]["text"] == "Bring a pencil"
+    assert result["progress_window"]["playlist_name"] == "Second period"
+    assert result["progress_window"]["start"].startswith("2026-09-07T09:00:00")
+    assert result["progress_window"]["end"].startswith("2026-09-07T10:00:00")
+
+
+def test_blanking_action_invalidates_stale_hardware_state(authenticated_client, db):
+    set_setting(db, "display_power_state", "off")
+    response = authenticated_client.post(
+        "/api/display/test-blank",
+        json={"state": "start"},
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
+    assert response.status_code == 200
+    assert get_setting(db, "display_power_state") == "unknown"
 
 
 def test_every_render_kind_has_a_playable_descriptor():

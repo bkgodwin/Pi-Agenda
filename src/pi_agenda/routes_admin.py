@@ -208,6 +208,15 @@ def schedules():
     return render_template("schedules.html", schedules=rows)
 
 
+@bp.get("/widgets")
+@login_required
+def widgets():
+    rows = get_db().execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+    return render_template(
+        "widgets.html", settings={row["key"]: row["value"] for row in rows}
+    )
+
+
 @bp.get("/settings")
 @login_required
 def settings():

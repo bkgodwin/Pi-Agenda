@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -57,6 +58,12 @@ def error(code: str, message: str, status: int = 400):
 def payload() -> dict:
     candidate = request.get_json(silent=True)
     return candidate if isinstance(candidate, dict) else request.form.to_dict()
+
+
+def _invalidate_display_power(conn) -> None:
+    """Force the worker to reapply and verify the next requested HDMI state."""
+    set_setting(conn, "display_power_state", "unknown")
+    set_setting(conn, "display_power_pending_at", "")
 
 
 def _playlist_selection(values: dict) -> tuple[list[int] | None, dict]:
@@ -658,6 +665,8 @@ def put_schedule():
             "UPDATE display_schedule SET mode = ?, on_time = ?, off_time = ? WHERE weekday = ?",
             normalized,
         )
+        _invalidate_display_power(conn)
+        bump_playlist_version(conn)
     return ok({"days": rules})
 
 
@@ -674,12 +683,15 @@ def set_override():
     except (TypeError, ValueError):
         return error("invalid_override", "minutes must be a number")
     expires = datetime.now(UTC) + timedelta(minutes=minutes)
-    get_db().execute(
+    conn = get_db()
+    conn.execute(
         """INSERT INTO manual_display_override(singleton, state, expires_at, created_at)
            VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET
            state = excluded.state, expires_at = excluded.expires_at, created_at = excluded.created_at""",
         (state, expires.isoformat(timespec="seconds"), utcnow()),
     )
+    _invalidate_display_power(conn)
+    bump_playlist_version(conn)
     return ok({"state": state, "expires_at": expires.isoformat(timespec="seconds")})
 
 
@@ -687,7 +699,10 @@ def set_override():
 @api_login_required
 def clear_override():
     validate_csrf()
-    get_db().execute("DELETE FROM manual_display_override WHERE singleton = 1")
+    conn = get_db()
+    conn.execute("DELETE FROM manual_display_override WHERE singleton = 1")
+    _invalidate_display_power(conn)
+    bump_playlist_version(conn)
     return ok({"cleared": True})
 
 
@@ -810,6 +825,7 @@ def test_screen_blank():
         return error("invalid_blank_test", "state must be start or stop")
     conn = get_db()
     set_setting(conn, "blank_test_enabled", "1" if state == "start" else "0")
+    _invalidate_display_power(conn)
     bump_playlist_version(conn)
     return ok({"active": state == "start"})
 
@@ -827,6 +843,7 @@ def start_holiday():
     until = datetime.now(UTC) + timedelta(days=days)
     conn = get_db()
     set_setting(conn, "holiday_until", until.isoformat(timespec="seconds"))
+    _invalidate_display_power(conn)
     bump_playlist_version(conn)
     return ok({"until": until.isoformat(timespec="seconds")})
 
@@ -837,6 +854,7 @@ def cancel_holiday():
     validate_csrf()
     conn = get_db()
     set_setting(conn, "holiday_until", "")
+    _invalidate_display_power(conn)
     bump_playlist_version(conn)
     return ok({"cancelled": True})
 
@@ -855,6 +873,86 @@ SETTABLE_SETTINGS = {
     "remote_player_enabled",
     "boot_splash_seconds",
 }
+
+WIDGET_SETTINGS = {
+    "clock_widget_enabled",
+    "clock_widget_position",
+    "clock_widget_size",
+    "progress_widget_enabled",
+    "progress_widget_position",
+    "progress_widget_height",
+    "progress_widget_color",
+    "ticker_widget_enabled",
+    "ticker_widget_text",
+    "ticker_widget_speed",
+    "ticker_widget_position",
+}
+
+
+@bp.get("/widgets")
+@api_login_required
+def get_widgets():
+    conn = get_db()
+    return ok({key: get_setting(conn, key, "") for key in sorted(WIDGET_SETTINGS)})
+
+
+@bp.put("/widgets")
+@api_login_required
+def put_widgets():
+    validate_csrf()
+    values = payload()
+    unknown = set(values) - WIDGET_SETTINGS
+    if unknown:
+        return error(
+            "invalid_widget", f"Unknown widget settings: {', '.join(sorted(unknown))}"
+        )
+    try:
+        for key in (
+            "clock_widget_enabled",
+            "progress_widget_enabled",
+            "ticker_widget_enabled",
+        ):
+            if key in values and str(values[key]) not in {"0", "1"}:
+                raise ValueError(f"{key} must be 0 or 1")
+        if values.get("clock_widget_position") not in {
+            None,
+            "top-left",
+            "top-center",
+            "top-right",
+            "bottom-left",
+            "bottom-center",
+            "bottom-right",
+        }:
+            raise ValueError("Invalid clock position")
+        if values.get("progress_widget_position") not in {None, "top", "bottom"}:
+            raise ValueError("Invalid progress position")
+        if values.get("ticker_widget_position") not in {None, "top", "bottom"}:
+            raise ValueError("Invalid ticker position")
+        for key, minimum, maximum in (
+            ("clock_widget_size", 24, 120),
+            ("progress_widget_height", 3, 30),
+            ("ticker_widget_speed", 5, 120),
+        ):
+            if key in values and not minimum <= int(values[key]) <= maximum:
+                raise ValueError(f"{key} is outside its allowed range")
+        color = str(values.get("progress_widget_color", "#000000"))
+        if "progress_widget_color" in values and not re.fullmatch(
+            r"#[0-9a-fA-F]{6}", color
+        ):
+            raise ValueError("Progress color must be a six-digit hex color")
+        if (
+            "ticker_widget_text" in values
+            and len(str(values["ticker_widget_text"])) > 500
+        ):
+            raise ValueError("Ticker text cannot exceed 500 characters")
+    except (TypeError, ValueError) as exc:
+        return error("invalid_widget", str(exc))
+    conn = get_db()
+    with transaction(conn):
+        for key, value in values.items():
+            set_setting(conn, key, value)
+        bump_playlist_version(conn)
+    return ok(values)
 
 
 @bp.get("/settings")

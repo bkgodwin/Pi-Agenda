@@ -2,12 +2,79 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .db import get_setting
 from .playlist_models import active_nondefault_playlists
-from .schedules import display_off_reason, display_should_be_on, item_is_active
+from .schedules import (
+    display_off_reason,
+    display_should_be_on,
+    item_is_active,
+    parse_hhmm,
+)
+
+
+def _widget_settings(conn) -> dict:
+    return {
+        "clock": {
+            "enabled": get_setting(conn, "clock_widget_enabled", "0") == "1",
+            "position": get_setting(conn, "clock_widget_position", "top-right"),
+            "size": int(get_setting(conn, "clock_widget_size", "48")),
+        },
+        "progress": {
+            "enabled": get_setting(conn, "progress_widget_enabled", "0") == "1",
+            "position": get_setting(conn, "progress_widget_position", "bottom"),
+            "height": int(get_setting(conn, "progress_widget_height", "8")),
+            "color": get_setting(conn, "progress_widget_color", "#40c057"),
+        },
+        "ticker": {
+            "enabled": get_setting(conn, "ticker_widget_enabled", "0") == "1",
+            "position": get_setting(conn, "ticker_widget_position", "bottom"),
+            "text": get_setting(conn, "ticker_widget_text", ""),
+            "speed": int(get_setting(conn, "ticker_widget_speed", "20")),
+        },
+    }
+
+
+def _progress_window(playlists: list[dict], local_now: datetime) -> dict | None:
+    """Find the first active, timed non-default playlist window."""
+    current_time = local_now.timetz().replace(tzinfo=None)
+    for playlist in playlists:
+        if (
+            playlist["is_default"]
+            or not playlist.get("start_time")
+            or not playlist.get("end_time")
+        ):
+            continue
+        start_time = parse_hhmm(playlist["start_time"])
+        end_time = parse_hhmm(playlist["end_time"])
+        if start_time is None or end_time is None:
+            continue
+        if start_time < end_time:
+            if not (start_time <= current_time < end_time):
+                continue
+            start = datetime.combine(local_now.date(), start_time, local_now.tzinfo)
+            end = datetime.combine(local_now.date(), end_time, local_now.tzinfo)
+        elif current_time >= start_time:
+            start = datetime.combine(local_now.date(), start_time, local_now.tzinfo)
+            end = datetime.combine(
+                local_now.date() + timedelta(days=1), end_time, local_now.tzinfo
+            )
+        elif current_time < end_time:
+            start = datetime.combine(
+                local_now.date() - timedelta(days=1), start_time, local_now.tzinfo
+            )
+            end = datetime.combine(local_now.date(), end_time, local_now.tzinfo)
+        else:
+            continue
+        return {
+            "playlist_id": playlist["id"],
+            "playlist_name": playlist["name"],
+            "start": start.isoformat(timespec="seconds"),
+            "end": end.isoformat(timespec="seconds"),
+        }
+    return None
 
 
 def _render_descriptor(
@@ -210,6 +277,7 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
         "display_on": display_on,
         "playlist_ids": playlist_ids,
         "item_ids": [item["id"] for item in items],
+        "widgets": _widget_settings(conn),
     }
     selection_key = hashlib.sha256(
         json.dumps(selection_payload, sort_keys=True).encode()
@@ -231,5 +299,7 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
             }
             for value in selected_playlists
         ],
+        "widgets": _widget_settings(conn),
+        "progress_window": _progress_window(selected_playlists, local_now),
         "items": items,
     }

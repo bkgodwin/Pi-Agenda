@@ -151,11 +151,21 @@ Failed conversions and remote refreshes retry automatically with bounded backoff
 - Manual display overrides can temporarily force the screen on or off.
 - Schedule boundaries use the timezone configured in Settings.
 
+## Widgets
+
+The **Widgets** tab configures overlays that remain readable without replacing the current content:
+
+- A 12-hour digital clock can be placed in any corner or at the top/bottom center, with an adjustable text size and translucent glass background.
+- A class progress bar tracks the active timed playlist from its start to end time. Its edge, height, and color are configurable; it is hidden for the default playlist and untimed playlists.
+- A text ticker can run along the top or bottom with editable text and adjustable travel time.
+
+When the ticker and progress bar share an edge, Pi-Agenda stacks them automatically. Clocks are offset past either edge band, so enabled widgets do not cover one another. Widgets disappear whenever the display is blanked or scheduled off.
+
 ## Display power
 
 Pi-Agenda detects the active connector instead of assuming a fixed HDMI name. At an off boundary it blanks the player and requests HDMI/DPMS standby. This normally lets a television sleep, but it does not cut wall power.
 
-Settings includes **Blank screen now** for testing the complete player-blackout and HDMI-off path. Pi-Agenda disables the active XRandR output (or Raspberry Pi firmware display power fallback) and records the display as off only after a follow-up query confirms that the video signal is disabled. The television should report **No signal** or enter standby—not merely show a black image. Select **End test and resume schedule** to re-enable the output and return control to the normal schedule. If verification fails, inspect `sudo journalctl -u pi-agenda-worker --no-pager -n 100`.
+The Dashboard and Settings pages include a display blanking control for testing the complete player-blackout and HDMI-off path. Pi-Agenda disables the active XRandR output (or Raspberry Pi firmware display power fallback) and records the display as off only after a follow-up query confirms that the video signal is disabled. The television should report **No signal** or enter standby—not merely show a black image. Select **Restore display** (or **End test and resume schedule** in Settings) to re-enable the output and return control to the normal schedule. Display commands are reapplied after service restarts so a stale saved state cannot leave the HDMI signal active. If verification fails, inspect `sudo journalctl -u pi-agenda-worker --no-pager -n 100`.
 
 Holiday mode pauses every playlist and holds the display off for 1–365 days. It can be cancelled early from Settings.
 
