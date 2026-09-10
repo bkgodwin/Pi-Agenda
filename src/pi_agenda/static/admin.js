@@ -406,6 +406,8 @@
       const data = await api("/api/system/status");
       const content = `<div><strong>${Math.round(data.cpu_percent)}%</strong><span>CPU</span></div><div><strong>${Math.round(data.memory.percent)}%</strong><span>Memory</span></div><div><strong>${Math.round(data.disk.free / 1073741824)} GB</strong><span>Disk free</span></div><div><strong>${data.temperature_c == null ? "—" : data.temperature_c.toFixed(1) + "°C"}</strong><span>Temperature</span></div><div><strong>${data.online ? "Online" : "Offline"}</strong><span>Internet</span></div>`;
       targets.forEach(target => { target.className = "health-grid"; target.innerHTML = content; });
+      const versionCommit = document.getElementById("version-commit");
+      if (versionCommit) versionCommit.textContent = data.version_commit || "unknown";
       const displaySummary = document.getElementById("display-summary");
       if (displaySummary) displaySummary.textContent = data.display_power_state;
     } catch (error) { targets.forEach(target => { target.textContent = error.message; }); }

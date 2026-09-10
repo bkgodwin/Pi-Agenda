@@ -126,11 +126,23 @@ if [[ "$MODE" != "reset-password" ]]; then
       --exclude 'data/' "$SCRIPT_DIR/" "$INSTALL_DIR/"
   fi
 
+  FRESH_VENV=0
   if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
     python3 -m venv "$INSTALL_DIR/.venv"
+    FRESH_VENV=1
   fi
   "$INSTALL_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-  "$INSTALL_DIR/.venv/bin/python" -m pip install "$INSTALL_DIR"
+  if [[ "$FRESH_VENV" == "1" ]]; then
+    "$INSTALL_DIR/.venv/bin/python" -m pip install "$INSTALL_DIR"
+  else
+    # The services import pi-agenda from the venv's site-packages (src layout),
+    # not from /opt/pi-agenda directly. A plain `pip install` is a no-op when
+    # the project version is unchanged, so repairs and one-click updates would
+    # rsync new files yet keep running the old code. Force a reinstall of the
+    # app package itself while leaving third-party dependencies untouched.
+    "$INSTALL_DIR/.venv/bin/python" -m pip install \
+      --force-reinstall --no-deps --no-build-isolation "$INSTALL_DIR"
+  fi
 
   PLAYER_TOKEN=""
   if [[ -r "$ENV_FILE" ]]; then

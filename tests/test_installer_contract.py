@@ -9,6 +9,15 @@ def test_display_helper_disables_and_verifies_the_output_signal():
     assert "Firmware display power state did not become" in script
 
 
+def test_repair_reinstalls_the_app_package_despite_an_unchanged_version():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    # Services import pi-agenda from the venv's site-packages (src layout), so a
+    # plain `pip install` is a no-op when the version is unchanged and updates
+    # would silently keep running old code.
+    assert "--force-reinstall" in script
+    assert "--no-deps" in script
+
+
 def test_scrolling_archive_is_allowed_by_the_installed_cache_csp():
     source = (
         Path(__file__).parents[1] / "src" / "pi_agenda" / "__main__.py"
