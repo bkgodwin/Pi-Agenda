@@ -95,7 +95,9 @@ def playlist_now():
         for item in payload["items"]:
             item.pop("remote_fallback_url", None)
     bucket = int(datetime.now(UTC).timestamp() // 15)
-    etag = f'"playlist-{payload["version"]}-{bucket}"'
+    # Include the selection itself so a schedule boundary invalidates a cached
+    # response immediately, even when it falls within the same time bucket.
+    etag = f'"playlist-{payload["version"]}-{payload["selection_key"]}-{bucket}"'
     if request.headers.get("If-None-Match") == etag:
         return "", 304, {"ETag": etag, "Cache-Control": "no-store"}
     response = jsonify(ok=True, data=payload, error=None)
