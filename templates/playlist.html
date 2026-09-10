@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ playlist.name }} — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>{{ playlist.name }} {% if playlist.is_default %}<span class="badge ok">Default</span>{% endif %}</h1><p>{% if playlist.is_default %}Runs only when the display schedule is on and no scheduled playlist is active.{% else %}Both this schedule and each item's own schedule must be active.{% endif %}</p></div><div class="inline-actions"><a class="button" href="{{ url_for('admin.playlists') }}">All playlists</a><a class="button primary" href="{{ url_for('admin.add_item', playlist=playlist.id) }}">Add content</a></div></div>
+<form id="playlist-settings-form" class="panel form-grid" data-playlist-id="{{ playlist.id }}" data-default="{{ 1 if playlist.is_default else 0 }}">
+  <label>Name<input name="name" required maxlength="100" value="{{ playlist.name }}"></label>
+  {% if playlist.is_default %}
+  <div class="notice span-2">The default playlist has no schedule and cannot be disabled. Make another playlist default to change the fallback.</div>
+  {% else %}
+  <label>Enabled<select name="enabled"><option value="1" {% if playlist.enabled %}selected{% endif %}>Yes</option><option value="0" {% if not playlist.enabled %}selected{% endif %}>No</option></select></label>
+  <fieldset class="span-2"><legend>Active days</legend><div class="day-picker">
+    {% for index, day in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}<label><input type="checkbox" name="playlist_day" value="{{ index }}" {% if day_enabled(playlist.days_mask, index) %}checked{% endif %}>{{ day }}</label>{% endfor %}
+  </div></fieldset>
+  <label>Start time (optional)<input name="start_time" type="time" value="{{ playlist.start_time or '' }}"></label>
+  <label>End time (optional)<input name="end_time" type="time" value="{{ playlist.end_time or '' }}"></label>
+  {% endif %}
+  <div class="span-2 form-actions">
+    {% if not playlist.is_default %}<button class="button" type="button" data-playlist-action="default">Make default</button><button class="button danger" type="button" data-playlist-action="delete">Delete playlist</button>{% endif %}
+    <button class="primary" type="submit">Save playlist</button>
+  </div>
+</form>
+<section class="panel flush">
+  <div id="playlist" class="playlist" data-playlist-id="{{ playlist.id }}">
+  {% for item in items %}
+    <article class="playlist-item" draggable="true" data-id="{{ item.id }}">
+      <div class="drag-handle" title="Drag to reorder">⋮⋮</div>
+      {% if item.type == 'announcement' %}<div class="announcement-thumb" style="background:{{ item.background_color }};color:{{ item.text_color }}">{{ item.source }}</div>{% elif item.generation_key %}<img class="item-thumb" width="88" height="52" src="{{ url_for('player.media', item_id=item.id, generation_key=item.generation_key, filename='thumbnail.jpg') }}" alt="">{% else %}<div class="type-icon">{{ item.type[:3]|upper }}</div>{% endif %}
+      <div class="item-main">
+        <h2>{{ item.name }}</h2>
+        <p>{{ item.type|replace('_', ' ') }} · {% if item.type == 'announcement' %}ready{% elif item.generation_kind %}{{ item.generation_kind|replace('_', ' ') }}{% else %}not processed{% endif %}</p>
+        <div class="item-meta">
+          {% if item.type in ('ppt_file','pdf_deck','ppt_link') and item.generation_kind == 'slides' %}<span>{{ item.slide_sec }}s/slide</span>{% else %}<span>{{ item.duration_sec }}s item</span>{% endif %}
+          {% if item.type == 'announcement' %}<span>{{ item.text_size }}px {{ item.text_align }}</span>
+          {% elif item.type in ('url','ppt_link') and item.render_mode in ('live','archive','scroll') %}<span>Web zoom: {{ item.web_zoom }}%{% if item.render_mode == 'scroll' %} · scrolling{% endif %}</span>
+          {% else %}<span>Fit: {{ item.fit_mode }}</span>{% endif %}
+          <span class="badge {{ item.last_status }}">{{ item.last_status }}</span>
+        </div>
+        {% if item.last_error %}<p class="error-detail">{{ item.last_error }}</p>{% endif %}
+      </div>
+      <div class="item-actions">
+        <label class="switch"><input type="checkbox" data-action="toggle" {% if item.enabled %}checked{% endif %}><span>Enabled</span></label>
+        {% if item.type != 'announcement' %}<button class="button" data-action="refresh">Refresh</button>{% endif %}
+        <button class="button" data-action="duplicate">Duplicate</button>
+        <a class="button" target="_blank" rel="noopener" href="{{ url_for('admin.preview_item', item_id=item.id) }}">Preview</a>
+        <a class="button" href="{{ url_for('admin.edit_item', item_id=item.id) }}">Edit</a>
+        <button class="button danger" data-action="delete">Delete item</button>
+      </div>
+    </article>
+  {% else %}
+    <div class="empty-state"><h2>No content in this playlist</h2><p>Add new content or edit an existing item to assign it here.</p></div>
+  {% endfor %}
+  </div>
+</section>
+<dialog id="duplicate-dialog">
+  <form method="dialog" id="duplicate-form" class="form-grid">
+    <h2>Duplicate item</h2>
+    <p>Select one or more playlists. A separate copy is created in each, using that playlist's schedule.</p>
+    <div id="duplicate-playlist-options" class="day-picker"><p>Loading playlists…</p></div>
+    <div class="form-actions">
+      <button class="button" value="cancel" formnovalidate>Cancel</button>
+      <button class="primary" id="duplicate-confirm" value="default">Duplicate</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

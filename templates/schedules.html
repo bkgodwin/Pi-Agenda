@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Schedules — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Display schedule</h1><p>Overnight windows are supported. A window ends just before its off time.</p></div></div>
+<form id="schedule-form" class="panel">
+  <div class="schedule-grid">
+  {% for row in schedules %}
+    <div class="schedule-row" data-weekday="{{ row.weekday }}">
+      <strong>{{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][row.weekday] }}</strong>
+      <select name="mode"><option value="off" {% if row.mode == 'off' %}selected{% endif %}>Off all day</option><option value="always_on" {% if row.mode == 'always_on' %}selected{% endif %}>Always on</option><option value="window" {% if row.mode == 'window' %}selected{% endif %}>Time window</option></select>
+      <input name="on_time" type="time" value="{{ row.on_time or '' }}" aria-label="On time">
+      <span>to</span>
+      <input name="off_time" type="time" value="{{ row.off_time or '' }}" aria-label="Off time">
+    </div>
+  {% endfor %}
+  </div>
+  <div class="form-actions"><button class="primary" type="submit">Save schedule</button></div>
+</form>
+<section class="panel"><h2>Manual override</h2><p>Temporarily force the display state. It returns to the weekly schedule when the override expires.</p><div class="inline-actions"><input id="override-minutes" type="number" min="1" max="1440" value="240" aria-label="Override minutes"><button class="button" data-override="on">Turn on</button><button class="button" data-override="off">Turn off</button><button class="button" data-override="clear">Clear override</button></div></section>
+{% endblock %}

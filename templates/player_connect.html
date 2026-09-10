@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Connect display — Pi-Agenda</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="logo-mark">PA</div>
+    <h1>Connect display</h1>
+    <p>Enter the device token shown on the authenticated Settings page.</p>
+    {% if message %}<div class="flash error">{{ message }}</div>{% endif %}
+    <form method="post">
+      <label>Device token<input name="token" type="password" required autofocus autocomplete="off"></label>
+      <button class="primary full" type="submit">Connect</button>
+    </form>
+  </main>
+</body>
+</html>

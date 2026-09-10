@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Widgets — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Widgets</h1><p>Show useful information over scheduled content.</p></div></div>
+<form id="widgets-form" class="widget-settings-grid">
+  <section class="panel widget-card">
+    <div class="widget-card-heading"><div><h2>Clock</h2><p>A readable 12-hour clock in a glass panel.</p></div><label class="switch"><input type="checkbox" name="clock_widget_enabled" {% if settings.clock_widget_enabled == '1' %}checked{% endif %}> Enabled</label></div>
+    <div class="form-grid">
+      <label>Position<select name="clock_widget_position">
+        {% for value, label in [('top-left','Top left'),('top-center','Top center'),('top-right','Top right'),('bottom-left','Bottom left'),('bottom-center','Bottom center'),('bottom-right','Bottom right')] %}<option value="{{ value }}" {% if settings.clock_widget_position == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+      <label>Text size <output data-for="clock_widget_size">{{ settings.clock_widget_size }} px</output><input name="clock_widget_size" type="range" min="24" max="120" value="{{ settings.clock_widget_size }}"></label>
+    </div>
+  </section>
+  <section class="panel widget-card">
+    <div class="widget-card-heading"><div><h2>Class progress</h2><p>Fills across the current scheduled playlist window.</p></div><label class="switch"><input type="checkbox" name="progress_widget_enabled" {% if settings.progress_widget_enabled == '1' %}checked{% endif %}> Enabled</label></div>
+    <div class="form-grid">
+      <label>Position<select name="progress_widget_position"><option value="top" {% if settings.progress_widget_position == 'top' %}selected{% endif %}>Top</option><option value="bottom" {% if settings.progress_widget_position == 'bottom' %}selected{% endif %}>Bottom</option></select></label>
+      <label>Height <output data-for="progress_widget_height">{{ settings.progress_widget_height }} px</output><input name="progress_widget_height" type="range" min="3" max="30" value="{{ settings.progress_widget_height }}"></label>
+      <label>Color<input name="progress_widget_color" type="color" value="{{ settings.progress_widget_color }}"></label>
+    </div>
+    <p class="field-help">The bar is hidden for the default playlist and playlists without start/end times.</p>
+  </section>
+  <section class="panel widget-card">
+    <div class="widget-card-heading"><div><h2>Ticker</h2><p>A continuous, translucent scrolling message.</p></div><label class="switch"><input type="checkbox" name="ticker_widget_enabled" {% if settings.ticker_widget_enabled == '1' %}checked{% endif %}> Enabled</label></div>
+    <div class="form-grid">
+      <label class="span-2">Message<textarea name="ticker_widget_text" rows="3" maxlength="500">{{ settings.ticker_widget_text }}</textarea></label>
+      <label>Position<select name="ticker_widget_position"><option value="top" {% if settings.ticker_widget_position == 'top' %}selected{% endif %}>Top</option><option value="bottom" {% if settings.ticker_widget_position == 'bottom' %}selected{% endif %}>Bottom</option></select></label>
+      <label>Travel time <output data-for="ticker_widget_speed">{{ settings.ticker_widget_speed }} sec</output><input name="ticker_widget_speed" type="range" min="5" max="120" value="{{ settings.ticker_widget_speed }}"><small>Lower is faster.</small></label>
+    </div>
+  </section>
+  <div class="form-actions span-2"><button class="primary" type="submit">Save widgets</button></div>
+</form>
+{% endblock %}

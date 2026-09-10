@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="kiosk-exit-token" content="{{ exit_token }}">
+  <title>Pi-Agenda Player</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='enhancements.css') }}">
+  <script src="{{ url_for('static', filename='player.js') }}" defer></script>
+</head>
+<body class="player-screen">
+  <main id="stage" aria-live="off">
+    <section class="standby"><div class="standby-clock">--:--</div><div class="standby-message">Loading agenda…</div></section>
+  </main>
+  <aside id="widget-layer" class="widget-layer hidden" aria-hidden="true">
+    <div id="clock-widget" class="screen-clock hidden"></div>
+    <div id="ticker-widget" class="screen-ticker hidden"><span></span></div>
+    <div id="progress-widget" class="screen-progress hidden"><span></span></div>
+  </aside>
+  <div id="connection-status" class="connection-status amber" title="Connecting"></div>
+</body>
+</html>

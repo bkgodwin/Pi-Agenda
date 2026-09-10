@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{% if item %}Edit{% else %}Add content{% endif %} — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>{% if item %}Edit {{ item.name }}{% else %}Add content{% endif %}</h1><p>Item schedules are combined with the schedules of the selected playlists.</p></div></div>
+<form id="item-form" class="panel form-grid" data-item-id="{{ item.id if item else '' }}" enctype="multipart/form-data">
+  <label>Name<input name="name" required maxlength="160" value="{{ item.name if item else '' }}"></label>
+  <label>Content type
+    <select name="type" id="content-type" {% if item %}disabled{% endif %}>
+      {% for value, label in [('ppt_file','PowerPoint file'),('pdf_deck','PDF deck'),('ppt_link','Microsoft 365 PowerPoint link'),('image','Image'),('url','Website'),('video','Video'),('announcement','Announcement')] %}
+      <option value="{{ value }}" {% if item and item.type == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% if not item %}<label class="span-2 source-group" id="file-field">Choose file<input type="file" name="file" accept=".pptx,.pdf,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.mkv,.webm"></label>{% endif %}
+  <label class="span-2 source-group {% if not item or item.type not in ('url','ppt_link') %}hidden{% endif %}" id="source-field">URL or Microsoft embed code<textarea name="source" rows="4" placeholder="https://…">{{ item.source if item and item.type in ('url','ppt_link') else '' }}</textarea></label>
+  <label class="span-2 source-group {% if not item or item.type != 'announcement' %}hidden{% endif %}" id="announcement-field">Announcement message<textarea name="announcement_text" rows="5" maxlength="2000" placeholder="School picture day is Friday">{{ item.source if item and item.type == 'announcement' else '' }}</textarea></label>
+  <label id="render-mode-field">Render mode<select name="render_mode">
+    {% for value, label in [('auto','Auto — verified capture'),('live','Live webpage'),('converted','Converted slides'),('archive','Static archive'),('scroll','Scrolling archive'),('screenshot','Screenshot')] %}<option value="{{ value }}" {% if item and item.render_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select><small>Scrolling archive pauses at the top and bottom for 5% of the item time and scrolls for the middle 90%. Choose Live only for sites known to permit embedding.</small></label>
+  <label id="fit-mode-field">Media fit<select name="fit_mode">
+    {% for value, label in [('contain','Contain — show everything'),('cover','Cover — fill and crop'),('width','Fill width'),('height','Fill height'),('native','Native size'),('stretch','Stretch to screen')] %}<option value="{{ value }}" {% if item and item.fit_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <label id="web-zoom-field">Webpage zoom<input name="web_zoom" type="number" min="50" max="200" step="5" value="{{ item.web_zoom if item else 100 }}"><small>100% is normal. This applies only to webpage and live Microsoft frames.</small></label>
+  <div id="announcement-options" class="span-2 announcement-options {% if not item or item.type != 'announcement' %}hidden{% endif %}">
+    <label>Background color<input name="background_color" type="color" value="{{ item.background_color if item else '#12372a' }}"></label>
+    <label>Text color<input name="text_color" type="color" value="{{ item.text_color if item else '#ffffff' }}"></label>
+    <label>Text size<input name="text_size" type="number" min="24" max="160" value="{{ item.text_size if item else 64 }}"></label>
+    <label>Alignment<select name="text_align">{% for value in ['left','center','right'] %}<option value="{{ value }}" {% if item and item.text_align == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}</select></label>
+    <div id="announcement-preview" class="announcement-preview">Announcement preview</div>
+  </div>
+  <label>Item duration (seconds)<input name="duration_sec" type="number" min="0" max="86400" value="{{ item.duration_sec if item else defaults.duration_sec }}"></label>
+  <label id="slide-sec-field" class="{% if item and item.type not in ('ppt_file','pdf_deck','ppt_link') %}hidden{% endif %}">Seconds per slide<input name="slide_sec" type="number" min="1" max="3600" value="{{ item.slide_sec if item else defaults.slide_sec }}"></label>
+  <label id="volume-field" class="{% if not item or item.type != 'video' %}hidden{% endif %}">Volume <output id="volume-value">{{ item.volume if item else defaults.volume }}%</output><input name="volume" type="range" min="0" max="100" value="{{ item.volume if item else defaults.volume }}"></label>
+  <label>Enabled<select name="enabled"><option value="1" {% if not item or item.enabled %}selected{% endif %}>Yes</option><option value="0" {% if item and not item.enabled %}selected{% endif %}>No</option></select></label>
+  <fieldset class="span-2"><legend>Playlists</legend><input type="hidden" name="playlist_selection" value="1"><div class="day-picker" id="playlist-picker">
+    {% for playlist in playlists %}<label><input type="checkbox" name="playlist_ids" value="{{ playlist.id }}" data-days-mask="{{ playlist.days_mask }}" data-start-time="{{ playlist.start_time or '' }}" data-end-time="{{ playlist.end_time or '' }}" data-is-default="{{ 1 if playlist.is_default else 0 }}" {% if playlist.id in selected_playlist_ids %}checked{% endif %}>{{ playlist.name }}{% if playlist.is_default %} (default){% endif %}</label>{% endfor %}
+  </div><small>An item may belong to more than one playlist.{% if not item %} When a single scheduled playlist is selected, the item schedule below auto-fills from it.{% endif %}</small></fieldset>
+  {% if schedule_hint %}<p class="notice span-2" id="schedule-hint">Schedule pre-filled from the selected playlist. Adjust days/times if needed.</p>{% endif %}
+  <fieldset class="span-2"><legend>Item days</legend><div class="day-picker">
+    {% for index, day in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}<label><input type="checkbox" name="day" value="{{ index }}" {% if item %} {% if day_enabled(item.days_mask, index) %}checked{% endif %} {% elif schedule_hint %} {% if day_enabled(schedule_hint.days_mask, index) %}checked{% endif %} {% else %}checked{% endif %}>{{ day }}</label>{% endfor %}
+  </div></fieldset>
+  <label>Item start time (optional)<input name="start_time" type="time" value="{% if item %}{{ item.start_time or '' }}{% elif schedule_hint %}{{ schedule_hint.start_time }}{% endif %}"></label>
+  <label>Item end time (optional)<input name="end_time" type="time" value="{% if item %}{{ item.end_time or '' }}{% elif schedule_hint %}{{ schedule_hint.end_time }}{% endif %}"></label>
+  <div class="span-2 form-actions"><a class="button" href="{{ url_for('admin.playlists') }}">Cancel</a><button class="primary" type="submit">{% if item %}Save changes{% else %}Add and process{% endif %}</button></div>
+  <div class="span-2 progress hidden" id="upload-progress"><span></span><output>0%</output></div>
+</form>
+{% if item and item.type in ('ppt_file','pdf_deck','image','video') %}
+<form id="replace-form" class="panel form-grid" data-item-id="{{ item.id }}" enctype="multipart/form-data">
+  <div class="span-2"><h2>Replace source file</h2><p>The current verified version remains active until the replacement finishes processing.</p></div>
+  <label class="span-2">Replacement file<input type="file" name="file" required></label>
+  <div class="span-2 form-actions"><button class="primary" type="submit">Upload replacement</button></div>
+  <div class="span-2 progress hidden"><span></span><output>0%</output></div>
+</form>
+{% endif %}
+{% endblock %}
