@@ -89,7 +89,41 @@ def _render_descriptor(
     return {"render_kind": "unavailable", "render_url": None, "slides": []}
 
 
+def _paused_selection(conn) -> list[dict] | None:
+    """Return pinned playlists while the schedule is paused, else None."""
+    if get_setting(conn, "schedule_paused", "0") != "1":
+        return None
+    forced_text = get_setting(conn, "forced_playlist_id", "")
+    if forced_text.isdigit():
+        row = conn.execute(
+            "SELECT * FROM playlists WHERE id = ?", (int(forced_text),)
+        ).fetchone()
+        if row:
+            return [dict(row)]
+    try:
+        pinned = [
+            int(value)
+            for value in json.loads(get_setting(conn, "paused_playlist_ids", "[]"))
+        ]
+    except (ValueError, TypeError):
+        pinned = []
+    if pinned:
+        placeholders = ",".join("?" for _ in pinned)
+        rows = conn.execute(
+            f"SELECT * FROM playlists WHERE id IN ({placeholders})",  # nosec B608
+            pinned,
+        ).fetchall()
+        by_id = {int(row["id"]): dict(row) for row in rows}
+        ordered = [by_id[pid] for pid in pinned if pid in by_id]
+        if ordered:
+            return ordered
+    return []
+
+
 def _selected_playlists(conn, local_now: datetime) -> list[dict]:
+    paused = _paused_selection(conn)
+    if paused is not None:
+        return paused
     active = active_nondefault_playlists(conn, local_now)
     if active:
         return active

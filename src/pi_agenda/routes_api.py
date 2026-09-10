@@ -82,6 +82,35 @@ def _default_playlist_ids(conn) -> list[int]:
     return [int(row["id"])] if row else []
 
 
+def _inherit_schedule_from_playlist(
+    conn, values: dict, assignment_ids: list[int]
+) -> dict:
+    """Default a new item's schedule to its playlist when not explicitly set.
+
+    Frontend pre-fills the form, but API clients that omit schedule fields
+    should still inherit the single target playlist's schedule so the new
+    item is eligible whenever that playlist is active. Explicitly supplied
+    schedule values are never overwritten. The default playlist maps to an
+    all-day schedule.
+    """
+    if len(assignment_ids) != 1:
+        return values
+    if "days_mask" in values or "start_time" in values or "end_time" in values:
+        return values
+    playlist = conn.execute(
+        "SELECT days_mask, start_time, end_time, is_default FROM playlists WHERE id = ?",
+        (assignment_ids[0],),
+    ).fetchone()
+    if not playlist or playlist["is_default"]:
+        return values
+    return {
+        **values,
+        "days_mask": int(playlist["days_mask"]),
+        "start_time": playlist["start_time"] or "",
+        "end_time": playlist["end_time"] or "",
+    }
+
+
 @bp.get("/ready")
 def ready():
     try:
@@ -155,6 +184,7 @@ def add_item():
                 conn,
                 _default_playlist_ids(conn) if playlist_ids is None else playlist_ids,
             )
+            values = _inherit_schedule_from_playlist(conn, values, assignment_ids)
             _check_storage(request.content_length or 0)
             item_id = create_item(conn, values)
             extension = Path(uploaded.filename).suffix.lower()
@@ -178,6 +208,7 @@ def add_item():
                 conn,
                 _default_playlist_ids(conn) if playlist_ids is None else playlist_ids,
             )
+            values = _inherit_schedule_from_playlist(conn, values, assignment_ids)
             item_type = values.get("type")
             if item_type not in {"url", "ppt_link", "announcement"}:
                 raise ValueError("Uploads must use multipart form data")
@@ -371,34 +402,79 @@ def duplicate_item(item_id: int):
     ).fetchone()
     if not row:
         return error("not_found", "Item not found", 404)
-    values = dict(row)
-    values["name"] = f"{values['name']} (copy)"
-    values["source"] = row["source"]
-    new_id = create_item(conn, values)
-    if row["type"] in {"ppt_file", "pdf_deck", "image", "video"}:
-        source = current_app.config["RUNTIME_CONFIG"].data_dir / row["source"]
-        suffix = source.suffix
-        target_rel = Path("uploads") / str(new_id) / f"original{suffix}"
-        target = current_app.config["RUNTIME_CONFIG"].data_dir / target_rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-        update_item(conn, new_id, {"source": target_rel.as_posix()})
-    assign_item_to_playlists(conn, new_id, playlist_ids_for_item(conn, item_id))
-    if row["type"] == "announcement":
-        now = utcnow()
-        conn.execute(
-            """UPDATE media_items SET last_status = 'ok', last_checked = ?,
-                 last_good_at = ? WHERE id = ?""",
-            (now, now, new_id),
-        )
-        job_id = None
-    else:
-        job_id = enqueue_job(
-            conn,
-            "convert" if row["type"] not in {"url", "ppt_link"} else "refresh",
-            new_id,
-        )
-    return ok({"id": new_id, "job_id": job_id}, 201)
+    requested = payload().get("playlist_ids", None)
+    try:
+        if requested is None:
+            target_lists = [playlist_ids_for_item(conn, item_id)]
+        else:
+            raw = requested if isinstance(requested, list) else [requested]
+            target_lists = [[int(value)] for value in raw]
+            # Validate all requested playlists exist (deduped, order preserved).
+            flat = [pid for single in target_lists for pid in single]
+            validated = validate_playlist_ids(conn, flat)
+            target_lists = [[pid] for pid in validated]
+    except (TypeError, ValueError) as exc:
+        return error("invalid_playlist", str(exc))
+
+    def _schedule_for_playlist(playlist_id: int) -> dict:
+        playlist = conn.execute(
+            "SELECT days_mask, start_time, end_time, is_default FROM playlists WHERE id = ?",
+            (playlist_id,),
+        ).fetchone()
+        if not playlist or playlist["is_default"]:
+            return {"days_mask": 127, "start_time": None, "end_time": None}
+        return {
+            "days_mask": int(playlist["days_mask"]),
+            "start_time": playlist["start_time"],
+            "end_time": playlist["end_time"],
+        }
+
+    def _duplicate_once(target_playlist_ids: list[int]) -> dict:
+        values = dict(row)
+        values["name"] = f"{values['name']} (copy)"
+        values["source"] = row["source"]
+        if len(target_playlist_ids) == 1:
+            values.update(_schedule_for_playlist(target_playlist_ids[0]))
+        new_id = create_item(conn, values)
+        if row["type"] in {"ppt_file", "pdf_deck", "image", "video"}:
+            source = current_app.config["RUNTIME_CONFIG"].data_dir / row["source"]
+            suffix = source.suffix
+            target_rel = Path("uploads") / str(new_id) / f"original{suffix}"
+            target = current_app.config["RUNTIME_CONFIG"].data_dir / target_rel
+            try:
+                if source.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+                    update_item(conn, new_id, {"source": target_rel.as_posix()})
+            except OSError:
+                pass
+        assign_item_to_playlists(conn, new_id, target_playlist_ids)
+        if row["type"] == "announcement":
+            now = utcnow()
+            conn.execute(
+                """UPDATE media_items SET last_status = 'ok', last_checked = ?,
+                     last_good_at = ? WHERE id = ?""",
+                (now, now, new_id),
+            )
+            job_id = None
+        else:
+            job_id = enqueue_job(
+                conn,
+                "convert" if row["type"] not in {"url", "ppt_link"} else "refresh",
+                new_id,
+            )
+        return {
+            "id": new_id,
+            "job_id": job_id,
+            "playlist_ids": target_playlist_ids,
+        }
+
+    try:
+        copies = [_duplicate_once(targets) for targets in target_lists]
+    except ValueError as exc:
+        return error("invalid_playlist", str(exc))
+    first = copies[0]
+    return ok({"id": first["id"], "job_id": first["job_id"], "items": copies}, 201)
 
 
 @bp.post("/items/reorder")
@@ -638,6 +714,13 @@ def display_status():
             0 if current_index is None else (current_index + 1) % len(playlist["items"])
         ]
     current = playlist["items"][current_index] if current_index is not None else None
+    try:
+        paused_ids = [
+            int(v) for v in json.loads(get_setting(conn, "paused_playlist_ids", "[]"))
+        ]
+    except (ValueError, TypeError):
+        paused_ids = []
+    forced_text = get_setting(conn, "forced_playlist_id", "")
     return ok(
         {
             "display_on": playlist["display_on"],
@@ -649,8 +732,73 @@ def display_status():
             "active_playlists": playlist["active_playlists"],
             "holiday_until": get_setting(conn, "holiday_until", ""),
             "blank_test_enabled": get_setting(conn, "blank_test_enabled", "0") == "1",
+            "schedule_paused": get_setting(conn, "schedule_paused", "0") == "1",
+            "paused_playlist_ids": paused_ids,
+            "forced_playlist_id": int(forced_text) if forced_text.isdigit() else None,
         }
     )
+
+
+@bp.post("/display/pause")
+@api_login_required
+def pause_schedule():
+    validate_csrf()
+    conn = get_db()
+    playlist = build_playlist(
+        conn, cache_port=current_app.config["RUNTIME_CONFIG"].cache_port
+    )
+    pinned = [entry["id"] for entry in playlist["active_playlists"]]
+    set_setting(conn, "schedule_paused", "1")
+    set_setting(conn, "paused_playlist_ids", json.dumps(pinned))
+    bump_playlist_version(conn)
+    return ok({"paused": True, "playlist_ids": pinned})
+
+
+@bp.post("/display/resume")
+@api_login_required
+def resume_schedule():
+    validate_csrf()
+    conn = get_db()
+    set_setting(conn, "schedule_paused", "0")
+    set_setting(conn, "paused_playlist_ids", "[]")
+    set_setting(conn, "forced_playlist_id", "")
+    bump_playlist_version(conn)
+    return ok({"paused": False})
+
+
+@bp.delete("/display/pause")
+@api_login_required
+def clear_schedule_pause():
+    validate_csrf()
+    conn = get_db()
+    set_setting(conn, "schedule_paused", "0")
+    set_setting(conn, "paused_playlist_ids", "[]")
+    set_setting(conn, "forced_playlist_id", "")
+    bump_playlist_version(conn)
+    return ok({"paused": False})
+
+
+@bp.post("/display/force-play")
+@api_login_required
+def force_play_playlist():
+    validate_csrf()
+    conn = get_db()
+    if get_setting(conn, "schedule_paused", "0") != "1":
+        return error(
+            "not_paused", "Pause the schedule before force-playing a playlist", 409
+        )
+    try:
+        playlist_id = int(payload().get("playlist_id", 0))
+    except (TypeError, ValueError):
+        return error("invalid_playlist", "playlist_id must be a number")
+    row = conn.execute(
+        "SELECT id FROM playlists WHERE id = ?", (playlist_id,)
+    ).fetchone()
+    if not row:
+        return error("not_found", "Playlist not found", 404)
+    set_setting(conn, "forced_playlist_id", str(playlist_id))
+    bump_playlist_version(conn)
+    return ok({"forced_playlist_id": playlist_id})
 
 
 @bp.post("/display/test-blank")

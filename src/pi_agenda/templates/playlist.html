@@ -51,4 +51,15 @@
   {% endfor %}
   </div>
 </section>
+<dialog id="duplicate-dialog">
+  <form method="dialog" id="duplicate-form" class="form-grid">
+    <h2>Duplicate item</h2>
+    <p>Select one or more playlists. A separate copy is created in each, using that playlist's schedule.</p>
+    <div id="duplicate-playlist-options" class="day-picker"><p>Loading playlists…</p></div>
+    <div class="form-actions">
+      <button class="button" value="cancel" formnovalidate>Cancel</button>
+      <button class="primary" id="duplicate-confirm" value="default">Duplicate</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}

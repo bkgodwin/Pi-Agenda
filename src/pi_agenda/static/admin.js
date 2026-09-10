@@ -78,6 +78,29 @@
     type?.addEventListener("change", updateSource);
     renderModeField?.querySelector("select")?.addEventListener("change", updateSource);
     updateSource();
+    // Auto-fill item schedule from a singly-selected scheduled playlist (new items only).
+    if (!itemForm.dataset.itemId) {
+      const playlistPicker = document.getElementById("playlist-picker");
+      let scheduleDirty = false;
+      const scheduleInputs = [
+        ...itemForm.querySelectorAll('input[name="day"]'),
+        itemForm.elements.start_time,
+        itemForm.elements.end_time,
+      ].filter(Boolean);
+      scheduleInputs.forEach(input => input.addEventListener("change", () => { scheduleDirty = true; }));
+      const applyPlaylistSchedule = () => {
+        if (scheduleDirty || !playlistPicker) return;
+        const checked = [...playlistPicker.querySelectorAll('input[name="playlist_ids"]:checked')];
+        if (checked.length !== 1 || checked[0].dataset.isDefault === "1") return;
+        const mask = Number(checked[0].dataset.daysMask || 127);
+        itemForm.querySelectorAll('input[name="day"]').forEach(box => {
+          box.checked = Boolean(mask & (1 << Number(box.value)));
+        });
+        if (itemForm.elements.start_time) itemForm.elements.start_time.value = checked[0].dataset.startTime || "";
+        if (itemForm.elements.end_time) itemForm.elements.end_time.value = checked[0].dataset.endTime || "";
+      };
+      playlistPicker?.addEventListener("change", applyPlaylistSchedule);
+    }
     const volume = itemForm.elements.volume;
     volume?.addEventListener("input", () => { document.getElementById("volume-value").textContent = `${volume.value}%`; });
     const announcementPreview = document.getElementById("announcement-preview");
@@ -178,6 +201,46 @@
         playlist.insertBefore(dragged, event.clientY < box.top + box.height / 2 ? target : target.nextSibling);
       }
     });
+    const duplicateDialog = document.getElementById("duplicate-dialog");
+    const duplicateOptions = document.getElementById("duplicate-playlist-options");
+    let duplicateItemId = null;
+    const openDuplicateDialog = async itemId => {
+      duplicateItemId = itemId;
+      if (duplicateOptions) duplicateOptions.innerHTML = "<p>Loading playlists…</p>";
+      try {
+        const playlists = await api("/api/playlists");
+        if (duplicateOptions) {
+          duplicateOptions.innerHTML = "";
+          playlists.forEach(entry => {
+            const label = document.createElement("label");
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.value = String(entry.id);
+            box.checked = String(entry.id) === String(playlist.dataset.playlistId);
+            label.append(box, ` ${entry.name}${entry.is_default ? " (default)" : ""}`);
+            duplicateOptions.append(label);
+          });
+        }
+      } catch (error) {
+        if (duplicateOptions) duplicateOptions.innerHTML = `<p>${error.message}</p>`;
+      }
+      if (typeof duplicateDialog?.showModal === "function") duplicateDialog.showModal();
+    };
+    document.getElementById("duplicate-confirm")?.addEventListener("click", event => {
+      event.preventDefault();
+      const selected = [...(duplicateOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(box => Number(box.value));
+      if (!selected.length) {
+        notify("Select at least one playlist", true);
+        return;
+      }
+      api(`/api/items/${duplicateItemId}/duplicate`, {method: "POST", body: JSON.stringify({playlist_ids: selected})})
+        .then(data => {
+          duplicateDialog?.close();
+          notify(`Created ${data.items?.length || 1} cop${(data.items?.length || 1) === 1 ? "y" : "ies"}`);
+          window.location.reload();
+        })
+        .catch(error => notify(error.message, true));
+    });
     playlist.addEventListener("click", event => {
       const button = event.target.closest("[data-action]");
       const item = button?.closest(".playlist-item");
@@ -185,10 +248,13 @@
       const id = Number(item.dataset.id);
       const action = button.dataset.action;
       if (action === "delete" && !window.confirm("Delete this item and its stored media?")) return;
+      if (action === "duplicate") {
+        openDuplicateDialog(id);
+        return;
+      }
       const requests = {
         delete: ["DELETE", `/api/items/${id}`, null],
         refresh: ["POST", `/api/items/${id}/refresh`, {}],
-        duplicate: ["POST", `/api/items/${id}/duplicate`, {}],
       };
       if (requests[action]) {
         const [method, url, body] = requests[action];
@@ -344,6 +410,39 @@
       if (displaySummary) displaySummary.textContent = data.display_power_state;
     } catch (error) { targets.forEach(target => { target.textContent = error.message; }); }
   }
+  const refreshPlaybackUI = data => {
+    const paused = Boolean(data?.schedule_paused);
+    const blanked = Boolean(data?.blank_test_enabled);
+    document.querySelector('[data-action="pause-schedule"]')?.classList.toggle("hidden", paused);
+    document.querySelector('[data-action="resume-schedule"]')?.classList.toggle("hidden", !paused);
+    const forceButton = document.querySelector('[data-action="force-play"]');
+    forceButton?.classList.toggle("hidden", !paused);
+    if (forceButton) forceButton.disabled = !paused;
+    const forceSelect = document.getElementById("force-play-select");
+    if (forceSelect) {
+      forceSelect.disabled = !paused;
+      if (data?.forced_playlist_id) forceSelect.value = String(data.forced_playlist_id);
+    }
+    document.querySelector('[data-action="blank-start"]')?.classList.toggle("hidden", blanked);
+    document.querySelector('[data-action="blank-stop"]')?.classList.toggle("hidden", !blanked);
+    document.getElementById("paused-notice")?.classList.toggle("hidden", !paused);
+    const state = document.getElementById("schedule-state");
+    if (state) state.textContent = paused ? (data?.forced_playlist_id ? `Paused · forced #${data.forced_playlist_id}` : "Paused") : (blanked ? "Blanked" : "Scheduled");
+  };
+  document.querySelector('[data-action="pause-schedule"]')?.addEventListener("click", () => {
+    api("/api/display/pause", {method: "POST", body: "{}"}).then(data => { notify("Schedule paused"); refreshPlaybackUI({schedule_paused: true}); updatePlayback(); }).catch(error => notify(error.message, true));
+  });
+  document.querySelector('[data-action="resume-schedule"]')?.addEventListener("click", () => {
+    api("/api/display/resume", {method: "POST", body: "{}"}).then(() => { notify("Schedule resumed"); refreshPlaybackUI({}); updatePlayback(); }).catch(error => notify(error.message, true));
+  });
+  document.querySelector('[data-action="force-play"]')?.addEventListener("click", () => {
+    const playlistId = Number(document.getElementById("force-play-select")?.value || 0);
+    if (!playlistId) {
+      notify("Select a playlist to force-play", true);
+      return;
+    }
+    api("/api/display/force-play", {method: "POST", body: JSON.stringify({playlist_id: playlistId})}).then(() => { notify("Force-playing playlist"); updatePlayback(); }).catch(error => notify(error.message, true));
+  });
   async function updatePlayback() {
     const current = document.getElementById("now-playing");
     if (!current) return;
@@ -354,6 +453,7 @@
       if (activePlaylists) activePlaylists.textContent = data.active_playlists?.map(value => value.name).join(", ") || "—";
       document.getElementById("up-next").textContent = data.up_next?.name || "—";
       document.getElementById("player-heartbeat").textContent = data.heartbeat ? `Player ${data.heartbeat}` : "No heartbeat yet";
+      refreshPlaybackUI(data);
     } catch (error) { current.textContent = error.message; }
   }
   updateHealth();

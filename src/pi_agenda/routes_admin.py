@@ -37,7 +37,12 @@ def dashboard():
            FROM media_items WHERE deleted_at IS NULL"""
     ).fetchone()
     recent_jobs = conn.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 8").fetchall()
-    return render_template("dashboard.html", counts=counts, recent_jobs=recent_jobs)
+    playlists = conn.execute(
+        "SELECT id, name, is_default FROM playlists ORDER BY is_default DESC, sort_order, id"
+    ).fetchall()
+    return render_template(
+        "dashboard.html", counts=counts, recent_jobs=recent_jobs, playlists=playlists
+    )
 
 
 @bp.get("/playlist")
@@ -102,12 +107,21 @@ def add_item():
     if requested is None:
         default = next((row for row in playlists if row["is_default"]), None)
         requested = default["id"] if default else None
+    schedule_hint = None
+    for row in playlists:
+        if row["id"] == requested and not row["is_default"]:
+            schedule_hint = {
+                "days_mask": int(row["days_mask"]),
+                "start_time": row["start_time"] or "",
+                "end_time": row["end_time"] or "",
+            }
     return render_template(
         "item_form.html",
         item=None,
         playlists=playlists,
         selected_playlist_ids={requested} if requested else set(),
         defaults=_item_defaults(conn),
+        schedule_hint=schedule_hint,
     )
 
 
@@ -129,6 +143,7 @@ def edit_item(item_id: int):
         playlists=playlists,
         selected_playlist_ids=set(playlist_ids_for_item(conn, item_id)),
         defaults=_item_defaults(conn),
+        schedule_hint=None,
     )
 
 
