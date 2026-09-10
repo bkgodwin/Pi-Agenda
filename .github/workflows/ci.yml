@@ -25,6 +25,11 @@ jobs:
           ruff format --check src tests
       - name: Shell syntax
         run: bash -n start.sh
+      - name: JavaScript syntax
+        run: |
+          node --check src/pi_agenda/static/admin.js
+          node --check src/pi_agenda/static/player.js
+          node --check src/pi_agenda/static/startup.js
       - name: Test
         run: pytest
       - name: Build wheel

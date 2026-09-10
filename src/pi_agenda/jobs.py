@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 from .db import utcnow
 
@@ -92,6 +93,28 @@ def finish_job(conn: sqlite3.Connection, job_id: int) -> None:
 def fail_job(conn: sqlite3.Connection, job: sqlite3.Row, error: str) -> None:
     now = utcnow()
     safe_error = error.strip()[:1000] or "Unknown job failure"
+    if int(job["attempt"]) < 3:
+        delay = 30 * (2 ** max(0, int(job["attempt"]) - 1))
+        retry_at = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat(
+            timespec="seconds"
+        )
+        conn.execute(
+            """UPDATE jobs SET state = 'queued', progress = 0, stage = 'retrying',
+                 not_before = ?, started_at = NULL, error = ? WHERE id = ?""",
+            (retry_at, safe_error, job["id"]),
+        )
+        if job["media_item_id"] is not None:
+            has_generation = conn.execute(
+                "SELECT active_generation_id FROM media_items WHERE id = ?",
+                (job["media_item_id"],),
+            ).fetchone()
+            status = "stale" if has_generation and has_generation[0] else "queued"
+            conn.execute(
+                """UPDATE media_items SET last_status = ?, last_error = ?,
+                     last_checked = ?, updated_at = ? WHERE id = ?""",
+                (status, safe_error, now, now, job["media_item_id"]),
+            )
+        return
     conn.execute(
         """UPDATE jobs SET state = 'failed', stage = 'failed', finished_at = ?, error = ?
            WHERE id = ?""",

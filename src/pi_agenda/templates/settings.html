@@ -3,10 +3,10 @@
 {% block content %}
 <div class="page-heading"><div><h1>Settings</h1><p>Changing resolution queues safe background re-renders.</p></div></div>
 <form id="settings-form" class="panel form-grid">
-  <label>Site name<input name="site_name" value="{{ settings.site_name }}"></label>
+  <label>Site name<input name="site_name" required maxlength="100" value="{{ settings.site_name }}"></label>
   <label>Resolution<select name="resolution"><option value="720p" {% if settings.resolution == '720p' %}selected{% endif %}>720p (recommended)</option><option value="1080p" {% if settings.resolution == '1080p' %}selected{% endif %}>1080p (experimental)</option></select></label>
   <label>Timezone<input name="timezone" value="{{ settings.timezone }}" placeholder="America/Chicago"></label>
-  <label>Daily refresh time<input name="check_time" type="time" value="{{ settings.check_time }}"></label>
+  <label>Daily refresh time<input name="check_time" type="time" required value="{{ settings.check_time }}"></label>
   <label>Default item seconds<input name="default_duration_sec" type="number" min="1" value="{{ settings.default_duration_sec }}"></label>
   <label>Default slide seconds<input name="default_slide_sec" type="number" min="1" value="{{ settings.default_slide_sec }}"></label>
   <label>Default volume<input name="default_volume" type="number" min="0" max="100" value="{{ settings.default_volume }}"></label>
@@ -18,4 +18,28 @@
   <label class="span-2">Allowed private/intranet hostnames <input name="intranet_allowlist" value="{{ settings.intranet_allowlist }}" placeholder="intranet.school.local,10.0.0.25"><small>Comma separated. Only add hosts you trust.</small></label>
   <div class="span-2 form-actions"><button class="primary" type="submit">Save settings</button></div>
 </form>
+<section class="panel {% if settings.blank_test_enabled == '1' %}holiday-banner{% endif %}">
+  <h2>Screen blanking test</h2>
+  <p>Blanking turns the physical display off using the same path as the weekly schedule. End the test to immediately resume normal scheduling.</p>
+  <div class="status-actions">
+    <button class="button danger" data-action="blank-start" {% if settings.blank_test_enabled == '1' %}disabled{% endif %}>Blank screen now</button>
+    <button class="button" data-action="blank-stop" {% if settings.blank_test_enabled != '1' %}disabled{% endif %}>End test and resume schedule</button>
+    <span>Status: <strong>{{ 'blanking test active' if settings.blank_test_enabled == '1' else 'normal schedule' }}</strong></span>
+  </div>
+</section>
+<section class="panel {% if settings.holiday_until %}holiday-banner{% endif %}">
+  <h2>Holiday mode</h2>
+  <p>Holiday mode pauses every playlist and keeps the display off, including the default playlist.</p>
+  <div class="status-actions">
+    <label>Days <input id="holiday-days" type="number" min="1" max="365" value="7"></label>
+    <button class="button danger" data-action="holiday-start">Start holiday mode</button>
+    <button class="button" data-action="holiday-cancel" {% if not settings.holiday_until %}disabled{% endif %}>Cancel holiday mode</button>
+    {% if settings.holiday_until %}<span>Scheduled to resume: <strong>{{ settings.holiday_until }}</strong></span>{% endif %}
+  </div>
+</section>
+<section class="panel">
+  <h2>Application update</h2>
+  <p>Check the latest <code>main</code> branch on GitHub. If an update exists, Pi-Agenda downloads a clean copy, repairs dependencies and services, preserves your data, and reboots.</p>
+  <button class="button primary" data-action="update-system">Check for and install update</button>
+</section>
 {% endblock %}

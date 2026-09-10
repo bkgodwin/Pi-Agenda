@@ -1,6 +1,6 @@
 # Pi-Agenda
 
-Pi-Agenda is an offline-tolerant classroom digital-signage application for a Raspberry Pi connected to an HDMI television or monitor. It rotates PowerPoint presentations, PDFs, Microsoft 365 PowerPoint links, images, websites, and videos using teacher-defined schedules.
+Pi-Agenda is an offline-tolerant classroom digital-signage application for a Raspberry Pi connected to an HDMI television or monitor. It rotates PowerPoint presentations, PDFs, Microsoft 365 PowerPoint links, images, websites, videos, and text announcements using named playlist and item schedules.
 
 The app includes a mobile-friendly management interface, automatic boot kiosk, local caching, background conversion, display power scheduling, and consistent backups.
 
@@ -70,6 +70,30 @@ http://192.168.1.42:8000/admin
 
 On every Pi boot, the connected display shows the current management hostname, IP address, and port for at least five seconds before starting the playlist.
 
+The installer makes `multi-user.target` the boot target, disables the detected graphical login manager at boot, and attaches the kiosk directly to `tty1`. Press **Esc** on a connected keyboard to stop the kiosk and return to Raspberry Pi OS. A Desktop installation starts its normal desktop login; Raspberry Pi OS Lite returns to its console. The kiosk starts again on the next reboot.
+
+### If the Pi still stops at an account sign-in
+
+Update the checkout and reapply the boot configuration:
+
+```bash
+cd Pi-Agenda
+git pull --ff-only origin main
+sudo ./start.sh --repair
+sudo systemctl enable pi-agenda-kiosk.service
+sudo systemctl set-default multi-user.target
+sudo reboot
+```
+
+If it still does not enter the kiosk, inspect the exact startup error:
+
+```bash
+sudo systemctl status pi-agenda-kiosk.service --no-pager
+sudo journalctl -u pi-agenda-kiosk.service --no-pager -n 100
+```
+
+Verify that the display is connected before boot and that no custom display-manager configuration is forcing a graphical login. Running `sudo ./start.sh --repair` is safe and preserves the database, password, uploads, playlists, and generated media.
+
 ## Installer maintenance commands
 
 Run these from the cloned repository or `/opt/pi-agenda`:
@@ -96,10 +120,26 @@ Sign in to the management site, select **Add content**, and choose one of:
 - JPG, PNG, WebP, or GIF image
 - Website URL
 - MP4, MOV, MKV, or WebM video
+- Text announcement with background color, text color, size, and alignment
 
 Uploaded files are processed by a single background worker so presentation or video conversion does not overwhelm the Pi. The playlist keeps using the previous verified generation until new output has been fully checked and published.
 
-Microsoft 365 and website items support live and cached modes. Some websites forbid iframe embedding, and some Microsoft links cannot be downloaded. The UI reports these limitations and uses a verified archive or screenshot where possible.
+Microsoft 365 and website items support live and cached modes. **Auto** is the reliable default and waits for verified local output. A website Auto item displays a screenshot, avoiding the blank frame produced when a site forbids iframe embedding. **Live** should be selected only for sites known to allow embedding; **Archive** displays the sanitized local HTML copy. Auto, Screenshot, and converted Microsoft output use the media fit control; Live and Archive frames use an independent webpage zoom control.
+
+Image, slide, screenshot, and video items offer six fitting choices: Contain, Cover, Fill width, Fill height, Native size, and Stretch. Contain shows the whole source; Cover fills the screen and crops; width/height constrain a single dimension. Preview the item after changing fit.
+
+Failed conversions and remote refreshes retry automatically with bounded backoff. The previous verified generation stays playable. Selecting Refresh manually wakes a delayed retry immediately.
+
+## Playlists
+
+- Create and name any number of playlists from **Playlists**.
+- Each non-default playlist has its own days and optional time window.
+- An item's days/time window and its playlist schedule must both be active for that item to rotate.
+- Items may belong to multiple playlists and have a separate order in each.
+- Scheduled playlists take priority whenever one or more are active.
+- Exactly one playlist is the default. It cannot be scheduled or disabled and runs only when no scheduled playlist is active and the global display schedule is on.
+- When another playlist is made default, the former default is disabled until you give it a schedule and enable it, preventing it from accidentally running all day.
+- Deleting a playlist preserves items that would otherwise become orphaned by moving them to the default playlist.
 
 ## Schedules
 
@@ -112,6 +152,20 @@ Microsoft 365 and website items support live and cached modes. Some websites for
 ## Display power
 
 Pi-Agenda detects the active connector instead of assuming a fixed HDMI name. At an off boundary it blanks the player and requests HDMI/DPMS standby. This normally lets a television sleep, but it does not cut wall power.
+
+Settings includes **Blank screen now** for testing the complete player-blackout and HDMI-off path. Select **End test and resume schedule** to wake the output and return control to the normal schedule.
+
+Holiday mode pauses every playlist and holds the display off for 1–365 days. It can be cancelled early from Settings.
+
+## One-click updates
+
+Select **Check for and install update** in Settings. Pi-Agenda compares the installed commit with the latest `main` branch. If already current, it reports that without rebooting. Otherwise it clones a clean copy, runs `start.sh --repair`, preserves application data and credentials, and reboots automatically.
+
+The update control is installed by the current `start.sh`. An older installation must run `sudo ./start.sh --repair` once over SSH before the first one-click update. Update failures are available with:
+
+```bash
+sudo journalctl -u 'pi-agenda-update-*' --no-pager -n 150
+```
 
 ## Backups
 

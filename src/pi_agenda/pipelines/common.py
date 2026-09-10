@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -97,16 +98,31 @@ def find_chromium() -> str:
 
 def capture_screenshot(url: str, output: Path, width: int, height: int) -> None:
     chromium = find_chromium()
-    run_command(
-        [
-            chromium,
-            "--headless=new",
-            "--disable-dev-shm-usage",
-            f"--window-size={width},{height}",
-            f"--screenshot={output}",
-            "--hide-scrollbars",
-            url,
-        ],
-        timeout=60,
-    )
+    last_error = None
+    for headless_mode in ("--headless=new", "--headless"):
+        try:
+            with tempfile.TemporaryDirectory(prefix="pi-agenda-chromium-") as profile:
+                run_command(
+                    [
+                        chromium,
+                        headless_mode,
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--no-first-run",
+                        "--allow-file-access-from-files",
+                        f"--user-data-dir={profile}",
+                        f"--window-size={width},{height}",
+                        f"--screenshot={output}",
+                        "--hide-scrollbars",
+                        "--virtual-time-budget=5000",
+                        url,
+                    ],
+                    timeout=90,
+                )
+            break
+        except PipelineError as exc:
+            last_error = exc
+            output.unlink(missing_ok=True)
+    else:
+        raise PipelineError("Chromium could not capture the page") from last_error
     verify_image(output)

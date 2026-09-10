@@ -22,7 +22,12 @@
   }
 
   function formObject(form) {
-    return Object.fromEntries(new FormData(form).entries());
+    const data = new FormData(form);
+    const values = Object.fromEntries(data.entries());
+    if (form.querySelector('[name="playlist_ids"]')) {
+      values.playlist_ids = data.getAll("playlist_ids").map(Number);
+    }
+    return values;
   }
 
   function daysMask(form) {
@@ -35,18 +40,57 @@
     const type = document.getElementById("content-type");
     const fileField = document.getElementById("file-field");
     const sourceField = document.getElementById("source-field");
+    const announcementField = document.getElementById("announcement-field");
+    const announcementOptions = document.getElementById("announcement-options");
+    const renderModeField = document.getElementById("render-mode-field");
+    const fitModeField = document.getElementById("fit-mode-field");
+    const webZoomField = document.getElementById("web-zoom-field");
+    const slideSecField = document.getElementById("slide-sec-field");
+    const volumeField = document.getElementById("volume-field");
     const updateSource = () => {
-      if (!type || !fileField || !sourceField) return;
+      if (!type || !sourceField || !announcementField) return;
       const remote = ["url", "ppt_link"].includes(type.value);
-      fileField.classList.toggle("hidden", remote);
+      const announcement = type.value === "announcement";
+      const modeSelect = renderModeField?.querySelector("select");
+      fileField?.classList.toggle("hidden", remote || announcement);
       sourceField.classList.toggle("hidden", !remote);
-      fileField.querySelector("input").required = !remote;
+      announcementField.classList.toggle("hidden", !announcement);
+      announcementOptions?.classList.toggle("hidden", !announcement);
+      const fileInput = fileField?.querySelector("input");
+      if (fileInput) fileInput.required = !remote && !announcement;
       sourceField.querySelector("textarea").required = remote;
+      announcementField.querySelector("textarea").required = announcement;
+      renderModeField?.classList.toggle("hidden", announcement || !remote);
+      slideSecField?.classList.toggle("hidden", !["ppt_file", "pdf_deck", "ppt_link"].includes(type.value));
+      volumeField?.classList.toggle("hidden", type.value !== "video");
+      const allowedModes = type.value === "url"
+        ? ["auto", "live", "archive", "screenshot"]
+        : type.value === "ppt_link" ? ["auto", "live", "converted", "screenshot"] : ["auto"];
+      modeSelect?.querySelectorAll("option").forEach(option => {
+        option.hidden = !allowedModes.includes(option.value);
+        option.disabled = !allowedModes.includes(option.value);
+      });
+      if (modeSelect && !allowedModes.includes(modeSelect.value)) modeSelect.value = allowedModes[0];
+      const framed = remote && ["live", "archive"].includes(modeSelect?.value);
+      fitModeField?.classList.toggle("hidden", announcement || framed);
+      webZoomField?.classList.toggle("hidden", !framed);
     };
     type?.addEventListener("change", updateSource);
+    renderModeField?.querySelector("select")?.addEventListener("change", updateSource);
     updateSource();
     const volume = itemForm.elements.volume;
     volume?.addEventListener("input", () => { document.getElementById("volume-value").textContent = `${volume.value}%`; });
+    const announcementPreview = document.getElementById("announcement-preview");
+    const updateAnnouncementPreview = () => {
+      if (!announcementPreview) return;
+      announcementPreview.textContent = itemForm.elements.announcement_text?.value || "Announcement preview";
+      announcementPreview.style.background = itemForm.elements.background_color?.value || "#12372a";
+      announcementPreview.style.color = itemForm.elements.text_color?.value || "#ffffff";
+      announcementPreview.style.fontSize = `${Math.min(72, Number(itemForm.elements.text_size?.value || 64))}px`;
+      announcementPreview.style.textAlign = itemForm.elements.text_align?.value || "center";
+    };
+    ["announcement_text", "background_color", "text_color", "text_size", "text_align"].forEach(name => itemForm.elements[name]?.addEventListener("input", updateAnnouncementPreview));
+    updateAnnouncementPreview();
     itemForm.addEventListener("submit", event => {
       event.preventDefault();
       const itemId = itemForm.dataset.itemId;
@@ -55,19 +99,19 @@
         values.days_mask = daysMask(itemForm);
         delete values.day;
         api(`/api/items/${itemId}`, {method: "PATCH", body: JSON.stringify(values)})
-          .then(() => { notify("Item saved"); window.location.assign("/admin/playlist"); })
+          .then(() => { notify("Item saved"); window.location.assign("/admin/playlists"); })
           .catch(error => notify(error.message, true));
         return;
       }
       const data = new FormData(itemForm);
       data.set("days_mask", String(daysMask(itemForm)));
       data.delete("day");
-      const isRemote = ["url", "ppt_link"].includes(type.value);
-      if (isRemote) {
-        const values = Object.fromEntries(data.entries());
+      const isStructured = ["url", "ppt_link", "announcement"].includes(type.value);
+      if (isStructured) {
+        const values = formObject(itemForm);
         delete values.file;
         api("/api/items", {method: "POST", body: JSON.stringify(values)})
-          .then(() => window.location.assign("/admin/playlist"))
+          .then(() => window.location.assign("/admin/playlists"))
           .catch(error => notify(error.message, true));
         return;
       }
@@ -84,7 +128,7 @@
       };
       xhr.onload = () => {
         const response = JSON.parse(xhr.responseText || "{}");
-        if (xhr.status >= 200 && xhr.status < 300 && response.ok) window.location.assign("/admin/playlist");
+        if (xhr.status >= 200 && xhr.status < 300 && response.ok) window.location.assign("/admin/playlists");
         else notify(response.error?.message || "Upload failed", true);
       };
       xhr.onerror = () => notify("Upload failed", true);
@@ -109,7 +153,7 @@
     };
     xhr.onload = () => {
       const response = JSON.parse(xhr.responseText || "{}");
-      if (xhr.status >= 200 && xhr.status < 300 && response.ok) window.location.assign("/admin/playlist");
+      if (xhr.status >= 200 && xhr.status < 300 && response.ok) window.location.assign("/admin/playlists");
       else notify(response.error?.message || "Replacement failed", true);
     };
     xhr.onerror = () => notify("Replacement failed", true);
@@ -124,7 +168,7 @@
       dragged?.classList.remove("dragging");
       dragged = null;
       const order = [...playlist.querySelectorAll(".playlist-item")].map(item => Number(item.dataset.id));
-      api("/api/items/reorder", {method: "POST", body: JSON.stringify({order})}).catch(error => notify(error.message, true));
+      api(`/api/playlists/${playlist.dataset.playlistId}/reorder`, {method: "POST", body: JSON.stringify({order})}).catch(error => notify(error.message, true));
     });
     playlist.addEventListener("dragover", event => {
       event.preventDefault();
@@ -181,6 +225,42 @@
     api("/api/display/override", options).then(() => notify("Display override updated")).catch(error => notify(error.message, true));
   }));
 
+  function playlistFormValues(form) {
+    const values = formObject(form);
+    values.days_mask = [...form.querySelectorAll('input[name="playlist_day"]:checked')]
+      .reduce((mask, input) => mask | (1 << Number(input.value)), 0);
+    delete values.playlist_day;
+    return values;
+  }
+
+  const newPlaylistForm = document.getElementById("new-playlist-form");
+  if (newPlaylistForm) newPlaylistForm.addEventListener("submit", event => {
+    event.preventDefault();
+    api("/api/playlists", {method: "POST", body: JSON.stringify(playlistFormValues(newPlaylistForm))})
+      .then(data => window.location.assign(`/admin/playlists/${data.id}`))
+      .catch(error => notify(error.message, true));
+  });
+
+  const playlistSettingsForm = document.getElementById("playlist-settings-form");
+  if (playlistSettingsForm) {
+    const playlistId = playlistSettingsForm.dataset.playlistId;
+    playlistSettingsForm.addEventListener("submit", event => {
+      event.preventDefault();
+      api(`/api/playlists/${playlistId}`, {method: "PATCH", body: JSON.stringify(playlistFormValues(playlistSettingsForm))})
+        .then(() => notify("Playlist saved"))
+        .catch(error => notify(error.message, true));
+    });
+    playlistSettingsForm.querySelectorAll("[data-playlist-action]").forEach(button => button.addEventListener("click", () => {
+      const action = button.dataset.playlistAction;
+      if (action === "delete" && !window.confirm("Delete this playlist? Its content items remain available in any other playlists.")) return;
+      const method = action === "delete" ? "DELETE" : "POST";
+      const suffix = action === "default" ? "/default" : "";
+      api(`/api/playlists/${playlistId}${suffix}`, {method, body: method === "POST" ? "{}" : undefined})
+        .then(() => window.location.assign("/admin/playlists"))
+        .catch(error => notify(error.message, true));
+    }));
+  }
+
   const settingsForm = document.getElementById("settings-form");
   if (settingsForm) settingsForm.addEventListener("submit", event => {
     event.preventDefault();
@@ -216,6 +296,42 @@
   document.querySelectorAll('[data-action="reboot"]').forEach(button => button.addEventListener("click", () => {
     if (window.confirm("Reboot the Raspberry Pi now?")) api("/api/system/reboot", {method: "POST", body: "{}"}).then(() => notify("Reboot requested")).catch(error => notify(error.message, true));
   }));
+  document.querySelectorAll('[data-action="blank-start"],[data-action="blank-stop"]').forEach(button => button.addEventListener("click", () => {
+    const start = button.dataset.action === "blank-start";
+    if (start && !window.confirm("Blank and power off the physical display now? Use End test to resume scheduling.")) return;
+    api("/api/display/test-blank", {method: "POST", body: JSON.stringify({state: start ? "start" : "stop"})})
+      .then(() => window.location.reload())
+      .catch(error => notify(error.message, true));
+  }));
+  document.querySelectorAll('[data-action="holiday-start"]').forEach(button => button.addEventListener("click", () => {
+    const days = Number(document.getElementById("holiday-days")?.value || 0);
+    if (!window.confirm(`Pause all playlists and power off the display for ${days} day(s)?`)) return;
+    api("/api/display/holiday", {method: "POST", body: JSON.stringify({days})})
+      .then(() => window.location.reload())
+      .catch(error => notify(error.message, true));
+  }));
+  document.querySelectorAll('[data-action="holiday-cancel"]').forEach(button => button.addEventListener("click", () => {
+    api("/api/display/holiday", {method: "DELETE"})
+      .then(() => window.location.reload())
+      .catch(error => notify(error.message, true));
+  }));
+  document.querySelectorAll('[data-action="update-system"]').forEach(button => button.addEventListener("click", () => {
+    if (!window.confirm("Check GitHub main and reboot automatically if an update is available?")) return;
+    button.disabled = true;
+    button.textContent = "Checking…";
+    api("/api/system/update", {method: "POST", body: "{}"})
+      .then(data => {
+        if (data.up_to_date) {
+          button.disabled = false;
+          button.textContent = "Check for and install update";
+          notify("Pi-Agenda is already up to date");
+        } else {
+          button.textContent = "Update scheduled — Pi will reboot";
+          notify("Update scheduled. The Pi will reboot when installation finishes.");
+        }
+      })
+      .catch(error => { button.disabled = false; button.textContent = "Check for and install update"; notify(error.message, true); });
+  }));
 
   async function updateHealth() {
     const targets = document.querySelectorAll("[data-system-status]");
@@ -234,6 +350,8 @@
     try {
       const data = await api("/api/display/status");
       current.textContent = data.current?.name || (data.display_on ? "Standby" : "Display off");
+      const activePlaylists = document.getElementById("active-playlists");
+      if (activePlaylists) activePlaylists.textContent = data.active_playlists?.map(value => value.name).join(", ") || "—";
       document.getElementById("up-next").textContent = data.up_next?.name || "—";
       document.getElementById("player-heartbeat").textContent = data.heartbeat ? `Player ${data.heartbeat}` : "No heartbeat yet";
     } catch (error) { current.textContent = error.message; }

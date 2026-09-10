@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
+import subprocess
+from types import SimpleNamespace
 
+from pi_agenda import routes_api
 from pi_agenda.db import set_setting
 
 
@@ -54,6 +57,16 @@ def test_player_is_loopback_only(client):
         ).status_code
         == 403
     )
+
+
+def test_kiosk_exit_requires_player_token(client, app):
+    app.config["PLAYER_TOKEN"] = "local-kiosk-secret"
+    assert client.post("/api/kiosk/exit").status_code == 403
+    response = client.post(
+        "/api/kiosk/exit",
+        headers={"X-Pi-Agenda-Player-Token": "local-kiosk-secret"},
+    )
+    assert response.status_code == 503
 
 
 def test_remote_player_requires_enabled_device_token(app, client, db):
@@ -126,3 +139,24 @@ def test_player_heartbeat_and_admin_display_status(authenticated_client):
     status = authenticated_client.get("/api/display/status")
     assert status.status_code == 200
     assert status.get_json()["data"]["heartbeat"]
+
+
+def test_update_reports_already_current(authenticated_client, monkeypatch):
+    version = "a" * 40
+    monkeypatch.setattr(routes_api.Path, "is_file", lambda _path: True)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=f"current={version}\nlatest={version}\n",
+            stderr="",
+        ),
+    )
+    response = authenticated_client.post(
+        "/api/system/update",
+        json={},
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["data"]["up_to_date"] is True

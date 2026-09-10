@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any
 
 from .db import bump_playlist_version, transaction, utcnow
 from .schedules import validate_window
 
-ITEM_TYPES = {"ppt_file", "pdf_deck", "ppt_link", "image", "url", "video"}
+ITEM_TYPES = {
+    "ppt_file",
+    "pdf_deck",
+    "ppt_link",
+    "image",
+    "url",
+    "video",
+    "announcement",
+}
 RENDER_MODES = {"auto", "live", "converted", "archive", "screenshot"}
-FIT_MODES = {"contain", "cover", "stretch"}
+FIT_MODES = {"contain", "cover", "stretch", "width", "height", "native"}
 
 
 def _integer(value: Any, field: str, minimum: int, maximum: int) -> int:
@@ -44,6 +53,17 @@ def validate_item(payload: dict[str, Any], *, partial: bool = False) -> dict[str
         if not source or len(source) > 4096:
             raise ValueError("Source is required and must be under 4096 characters")
         result["source"] = source
+    for field in ("background_color", "text_color"):
+        if field in payload:
+            color = str(payload[field]).strip().lower()
+            if not re.fullmatch(r"#[0-9a-f]{6}", color):
+                raise ValueError(f"{field} must be a six-digit hex color")
+            result[field] = color
+    if "text_align" in payload:
+        alignment = str(payload["text_align"])
+        if alignment not in {"left", "center", "right"}:
+            raise ValueError("Unsupported text alignment")
+        result["text_align"] = alignment
     if "embed_url" in payload:
         result["embed_url"] = str(payload.get("embed_url") or "").strip() or None
     if "render_mode" in payload:
@@ -64,6 +84,8 @@ def validate_item(payload: dict[str, Any], *, partial: bool = False) -> dict[str
         "days_mask": (1, 127),
         "sort_order": (0, 1_000_000),
         "enabled": (0, 1),
+        "text_size": (24, 160),
+        "web_zoom": (50, 200),
     }
     for field, bounds in numeric.items():
         if field in payload:
@@ -88,22 +110,28 @@ def create_item(conn: sqlite3.Connection, values: dict[str, Any]) -> int:
         "slide_sec": 10,
         "volume": 80,
         "fit_mode": "contain",
+        "web_zoom": 100,
         "days_mask": 127,
         "start_time": None,
         "end_time": None,
         "enabled": 1,
         "sort_order": 0,
+        "background_color": "#12372a",
+        "text_color": "#ffffff",
+        "text_size": 64,
+        "text_align": "center",
     }
     defaults.update(values)
     with transaction(conn):
         cursor = conn.execute(
             """INSERT INTO media_items(
                  name, type, source, embed_url, render_mode, duration_sec, slide_sec,
-                 volume, fit_mode, days_mask, start_time, end_time, enabled, sort_order,
-                 created_at, updated_at)
+                 volume, fit_mode, web_zoom, days_mask, start_time, end_time, enabled, sort_order,
+                 background_color, text_color, text_size, text_align, created_at, updated_at)
                VALUES (:name, :type, :source, :embed_url, :render_mode, :duration_sec,
-                 :slide_sec, :volume, :fit_mode, :days_mask, :start_time, :end_time,
-                 :enabled, :sort_order, :created_at, :updated_at)""",
+                 :slide_sec, :volume, :fit_mode, :web_zoom, :days_mask, :start_time, :end_time,
+                 :enabled, :sort_order, :background_color, :text_color, :text_size,
+                 :text_align, :created_at, :updated_at)""",
             defaults | {"created_at": now, "updated_at": now},
         )
         item_id = int(cursor.lastrowid)

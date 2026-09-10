@@ -4,7 +4,7 @@
 
 **App name:** Pi-Agenda
 
-Pi-Agenda is a self-hosted classroom digital-signage system for a Raspberry Pi Zero 2W or Raspberry Pi 3 Model B connected to an HDMI display. It continuously rotates class agendas, presentations, photos, websites, Microsoft 365 PowerPoint presentations, and videos according to teacher-defined schedules. A mobile-friendly management interface is available on the local network.
+Pi-Agenda is a self-hosted classroom digital-signage system for a Raspberry Pi Zero 2W or Raspberry Pi 3 Model B connected to an HDMI display. It continuously rotates class agendas, presentations, photos, websites, Microsoft 365 PowerPoint presentations, videos, and announcements through named playlists and layered teacher-defined schedules. A mobile-friendly management interface is available on the local network.
 
 This plan covers the complete desired product. It is not an MVP plan, and the database, APIs, services, installer, player, and administration interface should be designed for all content types from the beginning.
 
@@ -18,7 +18,9 @@ This plan covers the complete desired product. It is not an MVP plan, and the da
 
 ### 1.2 Success criteria
 
-- All six content types—PowerPoint file, PDF deck, Microsoft 365 PowerPoint link, image, website, and video—can participate in one ordered and scheduled playlist.
+- All seven content types—PowerPoint file, PDF deck, Microsoft 365 PowerPoint link, image, website, video, and text announcement—can participate in one or more named playlists.
+- Non-default playlists have independent schedules. An item is eligible only when both its own schedule and at least one selected playlist schedule are active.
+- Exactly one unscheduled default playlist supplies fallback content whenever the global display schedule is on and no scheduled playlist is active.
 - PowerPoint for the web edits appear through the live embed automatically. Downloadable cloud presentations can also be refreshed, converted, and retained for offline playback.
 - Local presentation uploads are replaced through the management interface when their source changes; they are not described as automatically synchronized.
 - A network or source failure never deletes the last verified playable generation.
@@ -40,8 +42,9 @@ This plan covers the complete desired product. It is not an MVP plan, and the da
 | `image` | Uploaded JPG, PNG, WebP, or GIF | Local optimized image | Same local image | `duration_sec` |
 | `url` | HTTP(S) page | Sandboxed iframe when the source permits embedding | Separate-origin static archive when safe and usable; screenshot fallback | `duration_sec` |
 | `video` | Uploaded MP4 or supported input converted to H.264/AAC MP4 | Local HTML video | Same local video | Full length or configured duration |
+| `announcement` | Text entered in the management interface | Native player text slide | Same local text slide | `duration_sec` |
 
-All types support a name, enabled state, sort order, days of week, optional time window, volume field, fit mode, refresh state, preview, and health information. Volume is retained for every type but is only applied where browser access permits it.
+All types support a name, enabled state, per-playlist sort order, days of week, optional time window, preview, and health information. Media types support volume and expanded fit modes; live web content uses a separate zoom control. Announcements expose background, text color, size, and alignment instead of irrelevant media controls.
 
 ### 2.2 Management interface
 
@@ -51,10 +54,12 @@ It provides:
 
 - Drag-and-drop uploads with progress and conversion-job status.
 - Microsoft 365 link and general website entry with validation and preview.
-- Playlist editing, enable/disable, drag reorder, duplicate, preview, and delete.
+- Named playlist creation, editing, scheduling, default selection, enable/disable, per-playlist drag reorder, item membership, duplicate, preview, and delete.
 - Per-item days, time window, duration or slide timing, volume, fit mode, rendering mode, and fallback status.
 - Weekly global screen schedule with always-on, timed-window, and off-all-day modes.
 - Manual screen override with a visible expiration time.
+- Screen-blanking test controls plus timed holiday mode and early cancellation.
+- Authenticated one-click update from the latest GitHub `main` branch, including an already-current result, repair installation, and reboot.
 - Resolution selection: 720p default and 1080p optional.
 - Refresh Now, Refresh All, and conversion progress.
 - CPU load, memory, temperature, throttling state, disk space, IP address, uptime, worker state, and current display state.
@@ -166,6 +171,7 @@ This system can contain student names, classroom schedules, and class photos. Be
 - `pi-agenda-worker.service`: durable job runner, periodic scheduling, health checks, and display-state decisions.
 - `pi-agenda-cache.service`: minimal static server for isolated archived website content, loopback only.
 - `pi-agenda-kiosk.service`: X11/Openbox/Chromium kiosk on the physical display, without an interactive desktop login.
+- The kiosk is enabled by `multi-user.target`, owns `tty1`, and suppresses the graphical login manager during boot. Escape schedules a clean kiosk stop and starts the detected desktop manager, or the Lite console when no desktop is installed. Reboot returns to kiosk mode.
 - Each service has restart limits, health logging, least-privilege ownership, and explicit ordering.
 
 The worker is separate from Waitress so web-server reloads, threads, or future worker-count changes cannot duplicate scheduled jobs. The worker remains lightweight and imports conversion-specific libraries only while a job needs them.
@@ -208,7 +214,7 @@ CREATE TABLE media_items (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK(type IN
-    ('ppt_file','pdf_deck','ppt_link','image','url','video')),
+    ('ppt_file','pdf_deck','ppt_link','image','url','video','announcement')),
   source TEXT NOT NULL,
   embed_url TEXT,
   render_mode TEXT NOT NULL DEFAULT 'auto'
@@ -217,7 +223,8 @@ CREATE TABLE media_items (
   slide_sec INTEGER NOT NULL DEFAULT 10 CHECK(slide_sec > 0),
   volume INTEGER NOT NULL DEFAULT 80 CHECK(volume BETWEEN 0 AND 100),
   fit_mode TEXT NOT NULL DEFAULT 'contain'
-    CHECK(fit_mode IN ('contain','cover','stretch')),
+    CHECK(fit_mode IN ('contain','cover','stretch','width','height','native')),
+  web_zoom INTEGER NOT NULL DEFAULT 100 CHECK(web_zoom BETWEEN 50 AND 200),
   days_mask INTEGER NOT NULL DEFAULT 127 CHECK(days_mask BETWEEN 1 AND 127),
   start_time TEXT,
   end_time TEXT,
@@ -229,6 +236,10 @@ CREATE TABLE media_items (
   last_status TEXT NOT NULL DEFAULT 'never'
     CHECK(last_status IN ('never','queued','refreshing','ok','stale','error')),
   last_error TEXT,
+  background_color TEXT NOT NULL DEFAULT '#12372a',
+  text_color TEXT NOT NULL DEFAULT '#ffffff',
+  text_size INTEGER NOT NULL DEFAULT 64,
+  text_align TEXT NOT NULL DEFAULT 'center',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(active_generation_id) REFERENCES media_generations(id)
@@ -286,6 +297,26 @@ CREATE TABLE manual_display_override (
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE playlists (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0,1)),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  days_mask INTEGER NOT NULL DEFAULT 127 CHECK(days_mask BETWEEN 1 AND 127),
+  start_time TEXT,
+  end_time TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE playlist_items (
+  playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+  media_item_id INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(playlist_id, media_item_id)
+);
 ```
 
 The actual migration must create `media_generations` before adding its foreign key from `media_items`, or create the tables in a transaction using a SQLite-compatible ordering. The SQL above is the target model, not a literal migration file.
@@ -302,6 +333,8 @@ The actual migration must create `media_generations` before adding its foreign k
 - `intranet_allowlist`
 - `remote_player_enabled`
 - `playlist_version`
+- `blank_test_enabled`
+- `holiday_until`
 - `boot_splash_seconds`, default `5`
 
 ---
@@ -309,6 +342,8 @@ The actual migration must create `media_generations` before adding its foreign k
 ## 7. Scheduling Semantics
 
 All internal timestamps are stored as UTC ISO-8601 values. Schedule rules are interpreted in the configured IANA timezone.
+
+Playlist selection is evaluated before item selection. All active non-default playlists participate at the same time; items shared by multiple active playlists are deduplicated. The default playlist participates only when no enabled non-default playlist schedule is active. An item then participates only when its own day/time rule is also active. The global display schedule, blanking test, and holiday mode can force the entire display off.
 
 ### 7.1 Per-item schedule
 
@@ -507,10 +542,10 @@ Status is item-specific. Internet availability is not inferred from a single Mic
 ## 12. Administration Pages
 
 1. **Dashboard** — now playing, up next, display state, network/source health, current IPs, worker state, CPU, RAM, temperature, throttling, disk, recent failures.
-2. **Playlist** — thumbnails, type, active rendering mode, duration, volume, schedule summary, enable toggle, reorder, preview, refresh, duplicate, delete.
+2. **Playlists** — named playlist cards, default indicator, schedule editor, item membership, thumbnails/announcement previews, type, rendering mode, duration, volume, schedule summary, enable toggle, per-playlist reorder, preview, refresh, duplicate, delete.
 3. **Add Content** — upload, website, and Microsoft 365 workflows with validation, progress, capability test, and preview.
 4. **Schedules** — global weekly grid, overnight-window UI, per-item schedule summary, timezone, clock/RTC warning, and manual override.
-5. **Settings** — site name, resolution, daily check time, defaults, boot splash duration, quotas, intranet allowlist, and remote-player option.
+5. **Settings** — site name, resolution, daily check time, defaults, boot splash duration, quotas, intranet allowlist, remote-player option, blanking test, holiday mode, and one-click update.
 6. **System** — addresses, service health, Refresh All, logs, backup, restore, password change, service restart, reboot, version, and platform diagnostics.
 
 Destructive operations require a confirmation displaying the exact target. Delete removes the item from the playlist immediately but performs generation cleanup as a recoverable background action where practical.
@@ -533,6 +568,8 @@ POST /login
 POST /logout
 GET  /admin
 GET  /admin/playlist
+GET  /admin/playlists
+GET  /admin/playlists/<id>
 GET  /admin/items/new
 GET  /admin/schedules
 GET  /admin/settings
@@ -549,6 +586,13 @@ POST /api/items/<id>/duplicate             authenticated + CSRF
 POST /api/items/reorder                     authenticated + CSRF
 GET  /admin/items/<id>/preview              authenticated
 
+GET  /api/playlists                         authenticated
+POST /api/playlists                         authenticated + CSRF
+PATCH /api/playlists/<id>                   authenticated + CSRF
+DELETE /api/playlists/<id>                  authenticated + CSRF
+POST /api/playlists/<id>/default            authenticated + CSRF
+POST /api/playlists/<id>/reorder            authenticated + CSRF
+
 GET  /api/jobs                             authenticated
 GET  /api/jobs/<id>                        authenticated
 POST /api/jobs/<id>/cancel                 authenticated + CSRF
@@ -556,6 +600,8 @@ GET  /api/schedule                         authenticated
 PUT  /api/schedule                         authenticated + CSRF
 POST /api/display/override                 authenticated + CSRF
 DELETE /api/display/override               authenticated + CSRF
+POST /api/display/test-blank               authenticated + CSRF
+POST|DELETE /api/display/holiday           authenticated + CSRF
 GET  /api/settings                         authenticated
 PUT  /api/settings                         authenticated + CSRF
 GET  /api/system/status                    authenticated
@@ -566,6 +612,7 @@ POST /api/system/password                  authenticated + CSRF
 POST /api/system/refresh-all               authenticated + CSRF
 GET  /api/system/backup                    authenticated
 POST /api/system/restore                   authenticated + CSRF
+POST /api/system/update                    authenticated + CSRF
 
 GET  /media/<item>/<generation>/<file>     loopback, authenticated session, or device cookie
 ```
@@ -597,7 +644,7 @@ No manual package installation, virtual-environment commands, service-file copyi
 
 1. Verify Raspberry Pi hardware, supported Raspberry Pi OS release, architecture, free disk space, network state, and root privileges.
 2. Detect the invoking user and avoid storing application data in that user's home directory.
-3. Install required APT packages, including Python venv support, X11/Openbox, Chromium, unclutter, Avahi/mDNS, zram support, LibreOffice Impress, Poppler, FFmpeg, `wget`, fonts, and required runtime libraries.
+3. Install required APT packages, including Git, Python venv support, X11/Openbox, Chromium, unclutter, Avahi/mDNS, zram support, LibreOffice Impress, Poppler, FFmpeg, `wget`, fonts, and required runtime libraries.
 4. Create the locked-down `pi-agenda` system user and grant only the required video, render, and audio device access.
 5. Install application code under `/opt/pi-agenda` and create `/var/lib/pi-agenda` with correct ownership.
 6. Create or update the Python virtual environment and install pinned Python dependencies.
@@ -608,7 +655,7 @@ No manual package installation, virtual-environment commands, service-file copyi
 11. Detect the display connector and record diagnostics without assuming a fixed HDMI name.
 12. Configure mDNS hostname advertisement for `pi-agenda.local` where the LAN supports it.
 13. Generate/install the four systemd unit files with correct dependencies, users, working directories, environment files, restart policies, and boot targets.
-14. Configure the kiosk to run on the physical display without an interactive desktop sign-in.
+14. Configure the kiosk under `multi-user.target` to run on the physical display without an interactive desktop sign-in, and bind Escape to a privileged fixed-command helper that returns to the OS.
 15. Enable all services at boot and start or restart them in dependency order.
 16. Wait for `/api/ready`, verify worker and kiosk status, and report actionable failures.
 17. Print the management URLs using the hostname and all current usable IPv4 addresses, always including port `8000`.
@@ -628,6 +675,7 @@ The kiosk will start automatically on every boot.
 - `sudo ./start.sh --reset-password` prompts for a replacement password.
 - `sudo ./start.sh --repair` reapplies packages, permissions, display detection, and services without reinstalling content.
 - `sudo ./start.sh --status` prints service state and management addresses without making changes.
+- The authenticated Settings update button compares the installed commit with GitHub `main`; when different, a detached root helper clones that exact commit, runs its `start.sh --repair`, and reboots. When identical, it reports that no update is needed.
 - `sudo ./start.sh --uninstall` is not implemented until a safe, explicit, backup-aware removal design exists.
 - Failures stop with a concise explanation and a command for viewing the relevant journal. The script does not silently continue after a required dependency or service fails.
 
@@ -799,6 +847,7 @@ The sequence is organized to reduce integration risk, but completion means deliv
 - [ ] Re-running `start.sh` preserves all data and credentials.
 - [ ] `--reset-password`, `--repair`, and `--status` behave as documented.
 - [ ] Cold boot requires no interactive sign-in.
+- [ ] Escape exits to the desktop manager (or Lite console), while reboot starts the kiosk again.
 - [ ] Boot screen shows mDNS name, current IP address, and port 8000 for at least five seconds.
 - [ ] DHCP address changes appear correctly on the next boot.
 
@@ -821,6 +870,8 @@ The sequence is organized to reduce integration risk, but completion means deliv
 - [ ] A site that permits framing displays live.
 - [ ] A site with frame restrictions degrades clearly to archive or screenshot.
 - [ ] Login-heavy and JavaScript-heavy sites fail safely and retain the last good fallback.
+- [ ] Announcement text, colors, size, alignment, preview, and rotation output match.
+- [ ] Contain, cover, width, height, native, and stretch fit modes behave distinctly on representative aspect ratios.
 
 ### Atomicity and recovery
 
@@ -832,6 +883,11 @@ The sequence is organized to reduce integration risk, but completion means deliv
 - [ ] Sudden power loss during a DB write, backup, and cache promotion recovers cleanly.
 
 ### Scheduling and power
+
+- [ ] Multiple simultaneous playlist schedules combine deterministically and deduplicate shared items.
+- [ ] Item and playlist schedules are both required, including overnight boundaries.
+- [ ] The default playlist runs only when no non-default playlist is active.
+- [ ] Blanking test and holiday mode force off; their cancel controls restore scheduled behavior.
 
 - [ ] Same-day, overnight, weekend, all-day, and disabled schedules behave at exact boundaries.
 - [ ] DST forward/back transitions follow the documented rule.

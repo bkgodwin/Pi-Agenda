@@ -10,7 +10,7 @@ from flask import current_app, g
 
 from .config import DEFAULT_SETTINGS
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def utcnow() -> str:
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS media_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK(type IN
-    ('ppt_file','pdf_deck','ppt_link','image','url','video')),
+    ('ppt_file','pdf_deck','ppt_link','image','url','video','announcement')),
   source TEXT NOT NULL,
   embed_url TEXT,
   render_mode TEXT NOT NULL DEFAULT 'auto'
@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS media_items (
   slide_sec INTEGER NOT NULL DEFAULT 10 CHECK(slide_sec > 0),
   volume INTEGER NOT NULL DEFAULT 80 CHECK(volume BETWEEN 0 AND 100),
   fit_mode TEXT NOT NULL DEFAULT 'contain'
-    CHECK(fit_mode IN ('contain','cover','stretch')),
+    CHECK(fit_mode IN ('contain','cover','stretch','width','height','native')),
+  web_zoom INTEGER NOT NULL DEFAULT 100 CHECK(web_zoom BETWEEN 50 AND 200),
   days_mask INTEGER NOT NULL DEFAULT 127 CHECK(days_mask BETWEEN 1 AND 127),
   start_time TEXT,
   end_time TEXT,
@@ -49,6 +50,10 @@ CREATE TABLE IF NOT EXISTS media_items (
     CHECK(last_status IN ('never','queued','refreshing','ok','stale','error')),
   last_error TEXT,
   deleted_at TEXT,
+  background_color TEXT NOT NULL DEFAULT '#12372a',
+  text_color TEXT NOT NULL DEFAULT '#ffffff',
+  text_size INTEGER NOT NULL DEFAULT 64,
+  text_align TEXT NOT NULL DEFAULT 'center',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -106,10 +111,112 @@ CREATE TABLE IF NOT EXISTS manual_display_override (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS playlists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0,1)),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  days_mask INTEGER NOT NULL DEFAULT 127 CHECK(days_mask BETWEEN 1 AND 127),
+  start_time TEXT,
+  end_time TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS playlist_items (
+  playlist_id INTEGER NOT NULL,
+  media_item_id INTEGER NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(playlist_id, media_item_id),
+  FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+  FOREIGN KEY(media_item_id) REFERENCES media_items(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_media_order ON media_items(enabled, sort_order, id);
 CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(state, not_before, id);
 CREATE INDEX IF NOT EXISTS idx_generations_item ON media_generations(media_item_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_default_playlist
+  ON playlists(is_default) WHERE is_default = 1;
+CREATE INDEX IF NOT EXISTS idx_playlist_items_order
+  ON playlist_items(playlist_id, sort_order, media_item_id);
 """
+
+
+MEDIA_ITEMS_V2 = """
+CREATE TABLE media_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN
+    ('ppt_file','pdf_deck','ppt_link','image','url','video','announcement')),
+  source TEXT NOT NULL,
+  embed_url TEXT,
+  render_mode TEXT NOT NULL DEFAULT 'auto'
+    CHECK(render_mode IN ('auto','live','converted','archive','screenshot')),
+  duration_sec INTEGER NOT NULL DEFAULT 20 CHECK(duration_sec >= 0),
+  slide_sec INTEGER NOT NULL DEFAULT 10 CHECK(slide_sec > 0),
+  volume INTEGER NOT NULL DEFAULT 80 CHECK(volume BETWEEN 0 AND 100),
+  fit_mode TEXT NOT NULL DEFAULT 'contain'
+    CHECK(fit_mode IN ('contain','cover','stretch','width','height','native')),
+  web_zoom INTEGER NOT NULL DEFAULT 100 CHECK(web_zoom BETWEEN 50 AND 200),
+  days_mask INTEGER NOT NULL DEFAULT 127 CHECK(days_mask BETWEEN 1 AND 127),
+  start_time TEXT,
+  end_time TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active_generation_id INTEGER,
+  last_checked TEXT,
+  last_good_at TEXT,
+  last_status TEXT NOT NULL DEFAULT 'never'
+    CHECK(last_status IN ('never','queued','refreshing','ok','stale','error')),
+  last_error TEXT,
+  deleted_at TEXT,
+  background_color TEXT NOT NULL DEFAULT '#12372a',
+  text_color TEXT NOT NULL DEFAULT '#ffffff',
+  text_size INTEGER NOT NULL DEFAULT 64,
+  text_align TEXT NOT NULL DEFAULT 'center',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)
+"""
+
+
+def _upgrade_media_items_v2(conn: sqlite3.Connection) -> None:
+    table_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'media_items'"
+    ).fetchone()[0]
+    if "announcement" in table_sql and "'native'" in table_sql:
+        return
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("ALTER TABLE media_items RENAME TO media_items_v1")
+        conn.execute(MEDIA_ITEMS_V2)
+        conn.execute(
+            """INSERT INTO media_items(
+                 id, name, type, source, embed_url, render_mode, duration_sec,
+                 slide_sec, volume, fit_mode, days_mask, start_time, end_time,
+                 enabled, sort_order, active_generation_id, last_checked,
+                 last_good_at, last_status, last_error, deleted_at, created_at,
+                 updated_at)
+               SELECT id, name, type, source, embed_url, render_mode, duration_sec,
+                 slide_sec, volume, fit_mode, days_mask, start_time, end_time,
+                 enabled, sort_order, active_generation_id, last_checked,
+                 last_good_at, last_status, last_error, deleted_at, created_at,
+                 updated_at FROM media_items_v1"""
+        )
+        conn.execute("DROP TABLE media_items_v1")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_media_order ON media_items(enabled, sort_order, id)"
+    )
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -128,6 +235,7 @@ def migrate(path: str | Path) -> None:
     conn = connect(path)
     try:
         conn.executescript(SCHEMA)
+        _upgrade_media_items_v2(conn)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(media_items)")}
         if "deleted_at" not in columns:
             conn.execute("ALTER TABLE media_items ADD COLUMN deleted_at TEXT")
@@ -152,6 +260,24 @@ def migrate(path: str | Path) -> None:
                     "16:00" if weekday < 5 else None,
                 ),
             )
+        now = utcnow()
+        conn.execute(
+            """INSERT OR IGNORE INTO playlists(
+                 name, is_default, enabled, days_mask, sort_order, created_at, updated_at)
+               VALUES ('Default', 1, 1, 127, 0, ?, ?)""",
+            (now, now),
+        )
+        default_id = conn.execute(
+            "SELECT id FROM playlists WHERE is_default = 1"
+        ).fetchone()["id"]
+        conn.execute(
+            """INSERT OR IGNORE INTO playlist_items(playlist_id, media_item_id, sort_order)
+               SELECT ?, m.id, m.sort_order FROM media_items m
+               WHERE m.deleted_at IS NULL AND NOT EXISTS (
+                 SELECT 1 FROM playlist_items pi WHERE pi.media_item_id = m.id
+               )""",
+            (default_id,),
+        )
         conn.commit()
     except Exception:
         if conn.in_transaction:

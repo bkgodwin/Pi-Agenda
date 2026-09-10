@@ -6,6 +6,7 @@
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}Pi-Agenda{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='enhancements.css') }}">
   <script src="{{ url_for('static', filename='admin.js') }}" defer></script>
 </head>
 <body class="admin-body">
@@ -13,7 +14,7 @@
     <a class="brand" href="{{ url_for('admin.dashboard') }}">Pi-Agenda</a>
     <nav aria-label="Main navigation">
       <a href="{{ url_for('admin.dashboard') }}">Dashboard</a>
-      <a href="{{ url_for('admin.playlist') }}">Playlist</a>
+      <a href="{{ url_for('admin.playlists') }}">Playlists</a>
       <a href="{{ url_for('admin.add_item') }}">Add content</a>
       <a href="{{ url_for('admin.schedules') }}">Schedules</a>
       <a href="{{ url_for('admin.settings') }}">Settings</a>

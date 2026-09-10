@@ -4,6 +4,8 @@ import re
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from .db import get_setting, set_setting
+
 
 def parse_hhmm(value: str | None) -> time | None:
     if value is None or value == "":
@@ -62,6 +64,8 @@ def display_rule_is_on(rule: dict, now: datetime) -> bool:
 
 
 def display_should_be_on(conn, now_utc: datetime, timezone_name: str) -> bool:
+    if forced_display_off_reason(conn, now_utc):
+        return False
     local_now = now_utc.astimezone(ZoneInfo(timezone_name))
     override = conn.execute(
         "SELECT state, expires_at FROM manual_display_override WHERE singleton = 1"
@@ -102,6 +106,30 @@ def display_should_be_on(conn, now_utc: datetime, timezone_name: str) -> bool:
         if previous_start and previous_end and previous_start > previous_end:
             return current < previous_end
     return False
+
+
+def forced_display_off_reason(conn, now_utc: datetime) -> str | None:
+    if get_setting(conn, "blank_test_enabled", "0") == "1":
+        return "blanking_test"
+    holiday_text = get_setting(conn, "holiday_until", "")
+    if holiday_text:
+        try:
+            holiday_until = datetime.fromisoformat(holiday_text)
+            if holiday_until.tzinfo is None:
+                holiday_until = holiday_until.replace(tzinfo=ZoneInfo("UTC"))
+            if holiday_until > now_utc:
+                return "holiday"
+        except ValueError:
+            pass
+        set_setting(conn, "holiday_until", "")
+    return None
+
+
+def display_off_reason(conn, now_utc: datetime, timezone_name: str) -> str | None:
+    forced = forced_display_off_reason(conn, now_utc)
+    if forced:
+        return forced
+    return None if display_should_be_on(conn, now_utc, timezone_name) else "schedule"
 
 
 def default_override_expiry(now: datetime) -> datetime:
