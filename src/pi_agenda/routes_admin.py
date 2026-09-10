@@ -7,6 +7,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     url_for,
 )
 
@@ -149,6 +150,38 @@ def preview_item(item_id: int):
         cache_port=current_app.config["RUNTIME_CONFIG"].cache_port,
         online=get_setting(conn, "internet_online", "0") == "1",
     )
+
+
+@bp.get("/items/<int:item_id>/preview-media/<generation_key>/<path:filename>")
+@login_required
+def preview_media(item_id: int, generation_key: str, filename: str):
+    row = (
+        get_db()
+        .execute(
+            """SELECT g.relative_path FROM media_generations g
+           JOIN media_items m ON m.active_generation_id = g.id
+           WHERE m.id = ? AND m.deleted_at IS NULL AND g.generation_key = ?""",
+            (item_id, generation_key),
+        )
+        .fetchone()
+    )
+    if not row:
+        abort(404)
+    config = current_app.config["RUNTIME_CONFIG"]
+    root = (config.data_dir / row["relative_path"]).resolve()
+    generations_root = (config.data_dir / "generations").resolve()
+    if generations_root not in root.parents:
+        abort(404)
+    if filename == "content":
+        candidates = list(root.glob("content.*"))
+        if len(candidates) != 1:
+            abort(404)
+        target = candidates[0]
+    else:
+        target = (root / filename).resolve()
+    if (target != root and root not in target.parents) or not target.is_file():
+        abort(404)
+    return send_file(target, conditional=True)
 
 
 @bp.get("/schedules")

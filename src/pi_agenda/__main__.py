@@ -27,7 +27,8 @@ class CacheRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "font-src 'self'; form-action 'none'; frame-ancestors http://127.0.0.1:*",
+            "script-src 'self'; font-src 'self'; form-action 'none'; "
+            "frame-ancestors http://127.0.0.1:*",
         )
         super().end_headers()
 

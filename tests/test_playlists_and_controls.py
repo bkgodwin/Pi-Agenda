@@ -310,6 +310,15 @@ def test_every_render_kind_has_a_playable_descriptor():
         )["render_kind"]
         == "iframe"
     )
+    scrolling = _render_descriptor(
+        base | {"type": "url", "render_mode": "scroll", "duration_sec": 60},
+        generation | {"kind": "website_bundle"},
+        online=True,
+        cache_port=8002,
+    )
+    assert scrolling["render_kind"] == "iframe"
+    assert scrolling["scrolling"] is True
+    assert "pi_agenda_scroll=1&duration=60" in scrolling["render_url"]
     assert (
         _render_descriptor(
             base | {"type": "url", "render_mode": "live"},
@@ -371,6 +380,7 @@ def test_v1_database_migrates_items_into_default_playlist(tmp_path):
           slide_sec INTEGER NOT NULL DEFAULT 10,
           volume INTEGER NOT NULL DEFAULT 80,
           fit_mode TEXT NOT NULL DEFAULT 'contain',
+          web_zoom INTEGER NOT NULL DEFAULT 100,
           days_mask INTEGER NOT NULL DEFAULT 127,
           start_time TEXT,
           end_time TEXT,
@@ -382,6 +392,10 @@ def test_v1_database_migrates_items_into_default_playlist(tmp_path):
           last_status TEXT NOT NULL DEFAULT 'never',
           last_error TEXT,
           deleted_at TEXT,
+          background_color TEXT NOT NULL DEFAULT '#12372a',
+          text_color TEXT NOT NULL DEFAULT '#ffffff',
+          text_size INTEGER NOT NULL DEFAULT 64,
+          text_align TEXT NOT NULL DEFAULT 'center',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -401,8 +415,12 @@ def test_v1_database_migrates_items_into_default_playlist(tmp_path):
           retire_after TEXT,
           FOREIGN KEY(media_item_id) REFERENCES media_items(id) ON DELETE CASCADE
         );
-        INSERT INTO media_items(name, type, source, created_at, updated_at)
-        VALUES ('Existing photo', 'image', 'uploads/1/original.png', 'now', 'now');
+        INSERT INTO media_items(
+          name, type, source, web_zoom, background_color, text_color,
+          text_size, text_align, created_at, updated_at)
+        VALUES (
+          'Existing photo', 'image', 'uploads/1/original.png', 135,
+          '#010203', '#fefefe', 88, 'right', 'now', 'now');
         INSERT INTO media_generations(
           media_item_id, generation_key, kind, relative_path, content_hash,
           created_at, verified_at)
@@ -417,7 +435,9 @@ def test_v1_database_migrates_items_into_default_playlist(tmp_path):
     try:
         item = upgraded.execute("SELECT * FROM media_items WHERE id = 1").fetchone()
         assert item["name"] == "Existing photo"
-        assert item["web_zoom"] == 100
+        assert item["web_zoom"] == 135
+        assert item["background_color"] == "#010203"
+        assert item["text_size"] == 88
         assert item["active_generation_id"] == 1
         assert (
             upgraded.execute(
@@ -434,6 +454,15 @@ def test_v1_database_migrates_items_into_default_playlist(tmp_path):
             (default["id"],),
         ).fetchone()
         create_item(upgraded, _announcement("New announcement", "Hello"))
+        create_item(
+            upgraded,
+            {
+                "name": "Scrolling page",
+                "type": "url",
+                "source": "https://example.com",
+                "render_mode": "scroll",
+            },
+        )
         assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         upgraded.close()

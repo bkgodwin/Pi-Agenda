@@ -28,7 +28,11 @@ def test_website_archive_removes_active_content(tmp_path, monkeypatch):
 
     monkeypatch.setattr(website, "safe_get", fake_get)
     monkeypatch.setattr(website, "validate_remote_url", lambda url, _allowlist: url)
-    monkeypatch.setattr(website, "capture_screenshot", lambda *_args: None)
+    monkeypatch.setattr(website, "capture_rendered_dom", lambda _url: html.decode())
+    captured = []
+    monkeypatch.setattr(
+        website, "capture_screenshot", lambda url, *_args: captured.append(url)
+    )
     output = tmp_path / "archive"
     website.archive_website(
         "https://example.test/",
@@ -38,10 +42,13 @@ def test_website_archive_removes_active_content(tmp_path, monkeypatch):
         screenshot_size=(1280, 720),
     )
     archived = (output / "index.html").read_text(encoding="utf-8")
-    assert "<script" not in archived
+    assert "alert(1)" not in archived
+    assert "pi-agenda-scroll.js" in archived
+    assert (output / "pi-agenda-scroll.js").is_file()
     assert "<form" not in archived
     assert "onload" not in archived
     assert "Content-Security-Policy" in archived
+    assert captured == ["https://example.test/"]
 
 
 def test_presentation_signatures_are_validated(tmp_path):

@@ -67,12 +67,18 @@ def _render_descriptor(
                 "render_url": f"{base}/screenshot.png",
                 "slides": [],
             }
+        scrolling = mode == "scroll"
+        scroll_duration = max(10, int(item.get("duration_sec") or 20))
+        render_url = f"http://127.0.0.1:{cache_port}/{item_id}/{key}/index.html"
+        if scrolling:
+            render_url += f"?pi_agenda_scroll=1&duration={scroll_duration}"
         return {
             "render_kind": "iframe",
-            "render_url": f"http://127.0.0.1:{cache_port}/{item_id}/{key}/index.html",
+            "render_url": render_url,
             "remote_fallback_url": f"{base}/screenshot.png",
             "slides": [],
             "web_zoom": item.get("web_zoom", 100),
+            "scrolling": scrolling,
         }
     if kind == "screenshot":
         return {
@@ -141,6 +147,8 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
         if descriptor["render_kind"] == "unavailable":
             continue
         dwell = item["duration_sec"]
+        if descriptor.get("scrolling"):
+            dwell = max(10, dwell or 20)
         if descriptor["render_kind"] == "deck":
             dwell = item["slide_sec"] * len(descriptor["slides"])
         elif descriptor["render_kind"] == "video" and dwell == 0 and generation:

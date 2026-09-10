@@ -204,7 +204,8 @@ set -Eeuo pipefail
 state="$1"
 display=:0
 xauthority=/var/lib/pi-agenda/.Xauthority
-output="$(runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --query 2>/dev/null | awk '/ connected/{print $1; exit}')"
+query="$(runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --query 2>/dev/null || true)"
+output="$(printf '%s\n' "$query" | awk '/ connected/{if ($0 ~ /[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/) {print $1; found=1; exit} if (!fallback) fallback=$1} END{if (!found) print fallback}')"
 if [[ -n "$output" ]]; then
   if [[ "$state" == "on" ]]; then
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --output "$output" --auto
@@ -213,8 +214,25 @@ if [[ -n "$output" ]]; then
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xset dpms force off || true
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --output "$output" --off
   fi
+  verified="$(runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --query 2>/dev/null | awk -v wanted="$output" '$1 == wanted {print; exit}')"
+  if [[ "$state" == "off" && "$verified" =~ [0-9]+x[0-9]+\+[0-9]+\+[0-9]+ ]]; then
+    echo "Display output $output still has an active signal after the off request" >&2
+    exit 1
+  fi
+  if [[ "$state" == "on" && ! "$verified" =~ [0-9]+x[0-9]+\+[0-9]+\+[0-9]+ ]]; then
+    echo "Display output $output did not regain an active signal" >&2
+    exit 1
+  fi
 elif command -v vcgencmd >/dev/null 2>&1; then
-  [[ "$state" == "on" ]] && vcgencmd display_power 1 || vcgencmd display_power 0
+  if [[ "$state" == "on" ]]; then
+    vcgencmd display_power 1
+    expected=1
+  else
+    vcgencmd display_power 0
+    expected=0
+  fi
+  actual="$(vcgencmd display_power)"
+  [[ "$actual" == *"=$expected"* ]] || { echo "Firmware display power state did not become $expected" >&2; exit 1; }
 else
   exit 1
 fi

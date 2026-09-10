@@ -124,7 +124,9 @@ Sign in to the management site, select **Add content**, and choose one of:
 
 Uploaded files are processed by a single background worker so presentation or video conversion does not overwhelm the Pi. The playlist keeps using the previous verified generation until new output has been fully checked and published.
 
-Microsoft 365 and website items support live and cached modes. **Auto** is the reliable default and waits for verified local output. A website Auto item displays a screenshot, avoiding the blank frame produced when a site forbids iframe embedding. **Live** should be selected only for sites known to allow embedding; **Archive** displays the sanitized local HTML copy. Auto, Screenshot, and converted Microsoft output use the media fit control; Live and Archive frames use an independent webpage zoom control.
+Microsoft 365 and website items support live and cached modes. **Auto** is the reliable default: Chromium allows up to 30 seconds for the live page to load and execute its rendering code, then Pi-Agenda verifies the resulting screenshot before publishing it. This avoids both premature loading/icon captures and blank frames from sites that forbid embedding. **Live** should be selected only for sites known to allow embedding; **Archive** displays the sanitized local HTML copy.
+
+**Scrolling archive** is intended for long webpages. Pi-Agenda captures the rendered document, stores its images and styles locally, pauses at the top for 5% of the item duration, scrolls to the bottom during the middle 90%, and leaves the final 5% for reading the bottom. A 60-second or longer item duration is recommended. Auto, Screenshot, and converted Microsoft output use the media fit control; Live, Archive, and Scrolling archive use an independent webpage zoom control.
 
 Image, slide, screenshot, and video items offer six fitting choices: Contain, Cover, Fill width, Fill height, Native size, and Stretch. Contain shows the whole source; Cover fills the screen and crops; width/height constrain a single dimension. Preview the item after changing fit.
 
@@ -153,7 +155,7 @@ Failed conversions and remote refreshes retry automatically with bounded backoff
 
 Pi-Agenda detects the active connector instead of assuming a fixed HDMI name. At an off boundary it blanks the player and requests HDMI/DPMS standby. This normally lets a television sleep, but it does not cut wall power.
 
-Settings includes **Blank screen now** for testing the complete player-blackout and HDMI-off path. Select **End test and resume schedule** to wake the output and return control to the normal schedule.
+Settings includes **Blank screen now** for testing the complete player-blackout and HDMI-off path. Pi-Agenda disables the active XRandR output (or Raspberry Pi firmware display power fallback) and records the display as off only after a follow-up query confirms that the video signal is disabled. The television should report **No signal** or enter standby—not merely show a black image. Select **End test and resume schedule** to re-enable the output and return control to the normal schedule. If verification fails, inspect `sudo journalctl -u pi-agenda-worker --no-pager -n 100`.
 
 Holiday mode pauses every playlist and holds the display off for 1–365 days. It can be cancelled early from Settings.
 

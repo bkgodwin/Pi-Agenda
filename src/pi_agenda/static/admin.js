@@ -64,14 +64,14 @@
       slideSecField?.classList.toggle("hidden", !["ppt_file", "pdf_deck", "ppt_link"].includes(type.value));
       volumeField?.classList.toggle("hidden", type.value !== "video");
       const allowedModes = type.value === "url"
-        ? ["auto", "live", "archive", "screenshot"]
+        ? ["auto", "live", "archive", "scroll", "screenshot"]
         : type.value === "ppt_link" ? ["auto", "live", "converted", "screenshot"] : ["auto"];
       modeSelect?.querySelectorAll("option").forEach(option => {
         option.hidden = !allowedModes.includes(option.value);
         option.disabled = !allowedModes.includes(option.value);
       });
       if (modeSelect && !allowedModes.includes(modeSelect.value)) modeSelect.value = allowedModes[0];
-      const framed = remote && ["live", "archive"].includes(modeSelect?.value);
+      const framed = remote && ["live", "archive", "scroll"].includes(modeSelect?.value);
       fitModeField?.classList.toggle("hidden", announcement || framed);
       webZoomField?.classList.toggle("hidden", !framed);
     };

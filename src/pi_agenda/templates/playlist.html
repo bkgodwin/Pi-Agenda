@@ -31,7 +31,7 @@
         <div class="item-meta">
           {% if item.type in ('ppt_file','pdf_deck','ppt_link') and item.generation_kind == 'slides' %}<span>{{ item.slide_sec }}s/slide</span>{% else %}<span>{{ item.duration_sec }}s item</span>{% endif %}
           {% if item.type == 'announcement' %}<span>{{ item.text_size }}px {{ item.text_align }}</span>
-          {% elif item.type in ('url','ppt_link') and item.render_mode in ('live','archive') %}<span>Web zoom: {{ item.web_zoom }}%</span>
+          {% elif item.type in ('url','ppt_link') and item.render_mode in ('live','archive','scroll') %}<span>Web zoom: {{ item.web_zoom }}%{% if item.render_mode == 'scroll' %} · scrolling{% endif %}</span>
           {% else %}<span>Fit: {{ item.fit_mode }}</span>{% endif %}
           <span class="badge {{ item.last_status }}">{{ item.last_status }}</span>
         </div>

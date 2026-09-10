@@ -15,8 +15,8 @@
   <label class="span-2 source-group {% if not item or item.type not in ('url','ppt_link') %}hidden{% endif %}" id="source-field">URL or Microsoft embed code<textarea name="source" rows="4" placeholder="https://…">{{ item.source if item and item.type in ('url','ppt_link') else '' }}</textarea></label>
   <label class="span-2 source-group {% if not item or item.type != 'announcement' %}hidden{% endif %}" id="announcement-field">Announcement message<textarea name="announcement_text" rows="5" maxlength="2000" placeholder="School picture day is Friday">{{ item.source if item and item.type == 'announcement' else '' }}</textarea></label>
   <label id="render-mode-field">Render mode<select name="render_mode">
-    {% for value in ['auto','live','converted','archive','screenshot'] %}<option value="{{ value }}" {% if item and item.render_mode == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}
-  </select><small>Auto uses verified local output when available. Choose Live only for sites known to permit embedding.</small></label>
+    {% for value, label in [('auto','Auto — verified capture'),('live','Live webpage'),('converted','Converted slides'),('archive','Static archive'),('scroll','Scrolling archive'),('screenshot','Screenshot')] %}<option value="{{ value }}" {% if item and item.render_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select><small>Scrolling archive pauses at the top and bottom for 5% of the item time and scrolls for the middle 90%. Choose Live only for sites known to permit embedding.</small></label>
   <label id="fit-mode-field">Media fit<select name="fit_mode">
     {% for value, label in [('contain','Contain — show everything'),('cover','Cover — fill and crop'),('width','Fill width'),('height','Fill height'),('native','Native size'),('stretch','Stretch to screen')] %}<option value="{{ value }}" {% if item and item.fit_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
   </select></label>
