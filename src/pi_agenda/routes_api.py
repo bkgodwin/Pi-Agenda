@@ -944,6 +944,7 @@ def system_status():
             "display_power_state": get_setting(conn, "display_power_state", "unknown"),
             "blank_test_enabled": get_setting(conn, "blank_test_enabled", "0") == "1",
             "holiday_until": get_setting(conn, "holiday_until", ""),
+            "version_commit": os.environ.get("PI_AGENDA_VERSION_COMMIT", "unknown"),
         }
     )
 

@@ -112,6 +112,9 @@ def main(argv: list[str] | None = None) -> None:
                 "SELECT COUNT(*) count FROM jobs WHERE state IN ('queued','running')"
             ).fetchone()["count"]
             print(f"Pi-Agenda {__version__}")
+            print(
+                f"Version commit: {os.environ.get('PI_AGENDA_VERSION_COMMIT', 'unknown')}"
+            )
             print(f"Data: {config.data_dir}")
             print(f"Port: {config.port}")
             print(f"Password configured: {'yes' if password_set else 'no'}")

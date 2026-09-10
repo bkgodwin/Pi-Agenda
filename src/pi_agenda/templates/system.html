@@ -2,7 +2,7 @@
 {% block title %}System — Pi-Agenda{% endblock %}
 {% block content %}
 <div class="page-heading"><div><h1>System</h1><p>Maintenance and recovery tools</p></div></div>
-<section class="panel"><h2>Health</h2><div data-system-status>Loading…</div></section>
+<section class="panel"><h2>Health</h2><div data-system-status>Loading…</div><p>Running version: <code id="version-commit">Loading…</code></p></section>
 <section class="panel"><h2>Content maintenance</h2><div class="inline-actions"><button class="button" data-action="refresh-all">Refresh all content</button><a class="button" href="{{ url_for('api.backup') }}">Download backup</a><button class="button" data-action="restart-services">Restart services</button><button class="button danger" data-action="reboot">Reboot Pi</button></div></section>
 <section class="panel"><h2>Restore backup</h2><p>Restoring replaces the database and uploads, then restarts Pi-Agenda. A pre-restore safety backup is retained on the Pi.</p><form id="restore-form" class="inline-actions"><input type="file" name="backup" accept=".zip" required><button class="button danger" type="submit">Restore backup</button></form></section>
 <section class="panel"><h2>Change password</h2><form id="password-form" class="form-grid compact"><label>New password<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><label>Confirm password<input name="confirm" type="password" minlength="8" required autocomplete="new-password"></label><div class="span-2"><button class="primary" type="submit">Change password</button></div></form></section>
