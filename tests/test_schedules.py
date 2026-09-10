@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pi_agenda.schedules import display_should_be_on, item_is_active, validate_window
+from pi_agenda.db import set_setting
+from pi_agenda.schedules import (
+    display_off_reason,
+    display_should_be_on,
+    item_is_active,
+    validate_window,
+)
 
 
 def test_item_same_day_and_boundaries():
@@ -27,6 +33,24 @@ def test_display_overnight_reads_previous_day(db):
     # 06:30 UTC is 01:30 Tuesday in America/Chicago during daylight time.
     now = datetime(2026, 9, 8, 6, 30, tzinfo=UTC)
     assert display_should_be_on(db, now, "America/Chicago")
+
+
+def test_pause_keeps_display_power_schedule_blanking_outside_window(db):
+    db.execute("UPDATE display_schedule SET mode='off', on_time=NULL, off_time=NULL")
+    db.execute(
+        "UPDATE display_schedule SET mode='window', on_time='09:00', off_time='10:00' WHERE weekday=0"
+    )
+    outside = datetime(2026, 9, 7, 11, 0, tzinfo=UTC)  # Monday, outside window
+    inside = datetime(2026, 9, 7, 9, 30, tzinfo=UTC)  # Monday, inside window
+    assert not display_should_be_on(db, outside, "UTC")
+    assert display_should_be_on(db, inside, "UTC")
+    # Pausing freezes playlist selection but must not keep the screen on
+    # outside the display time window.
+    set_setting(db, "schedule_paused", "1")
+    assert not display_should_be_on(db, outside, "UTC")
+    assert display_off_reason(db, outside, "UTC") == "schedule"
+    assert display_should_be_on(db, inside, "UTC")
+    assert display_off_reason(db, inside, "UTC") is None
 
 
 def test_window_validation():

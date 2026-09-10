@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 
@@ -93,6 +94,34 @@ def test_simultaneous_playlists_combine_and_deduplicate_shared_items(db):
         "Second",
     ]
     assert [value["name"] for value in result["items"]] == ["Shared", "Second only"]
+
+
+def test_paused_selection_stays_pinned_while_display_blanks_outside_window(db):
+    set_setting(db, "timezone", "UTC")
+    db.execute("UPDATE display_schedule SET mode='off', on_time=NULL, off_time=NULL")
+    db.execute(
+        "UPDATE display_schedule SET mode='window', on_time='09:00', off_time='10:00' WHERE weekday=0"
+    )
+    morning_id = create_playlist(
+        db,
+        {"name": "Morning", "days_mask": 1, "start_time": "09:00", "end_time": "10:00"},
+    )
+    item_id = create_item(db, _announcement("Morning note", "Good morning"))
+    assign_item_to_playlists(db, item_id, [morning_id])
+    # Pin the morning playlist while it is the active selection.
+    set_setting(db, "schedule_paused", "1")
+    set_setting(db, "paused_playlist_ids", json.dumps([morning_id]))
+    inside = build_playlist(
+        db, cache_port=8002, now_utc=datetime(2026, 9, 7, 9, 15, tzinfo=UTC)
+    )
+    assert [value["name"] for value in inside["active_playlists"]] == ["Morning"]
+    assert inside["display_on"] is True
+    outside = build_playlist(
+        db, cache_port=8002, now_utc=datetime(2026, 9, 7, 11, 0, tzinfo=UTC)
+    )
+    assert [value["name"] for value in outside["active_playlists"]] == ["Morning"]
+    assert outside["display_on"] is False
+    assert outside["display_off_reason"] == "schedule"
 
 
 def test_announcement_api_and_playlist_management(authenticated_client, db):
