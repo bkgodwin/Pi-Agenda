@@ -3,8 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="kiosk-exit-token" content="{{ exit_token }}">
   <title>Pi-Agenda Player</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='enhancements.css') }}">
   <script src="{{ url_for('static', filename='player.js') }}" defer></script>
 </head>
 <body class="player-screen">

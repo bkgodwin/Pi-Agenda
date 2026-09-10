@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import secrets
+import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 import psutil
 from flask import (
@@ -47,7 +50,9 @@ def startup():
 @bp.get("/player")
 @player_access_required
 def player():
-    return render_template("player.html")
+    return render_template(
+        "player.html", exit_token=current_app.config.get("PLAYER_TOKEN", "")
+    )
 
 
 @bp.route("/player/connect", methods=["GET", "POST"])
@@ -57,8 +62,6 @@ def player_connect():
         abort(404)
     message = None
     if request.method == "POST":
-        import secrets
-
         expected = current_app.config.get("PLAYER_TOKEN", "")
         supplied = request.form.get("token", "")
         if expected and secrets.compare_digest(expected, supplied):
@@ -125,6 +128,33 @@ def player_health():
         },
         error=None,
     )
+
+
+@bp.post("/api/kiosk/exit")
+def exit_kiosk():
+    if not is_loopback_request():
+        abort(403)
+    expected = current_app.config.get("PLAYER_TOKEN", "")
+    supplied = request.headers.get("X-Pi-Agenda-Player-Token", "")
+    if not expected or not secrets.compare_digest(expected, supplied):
+        abort(403)
+    helper = Path("/usr/local/libexec/pi-agenda-kiosk-control")
+    if not helper.is_file():
+        return jsonify(
+            ok=False,
+            data=None,
+            error={"code": "unavailable", "message": "Kiosk helper is unavailable"},
+        ), 503
+    result = subprocess.run(
+        ["/usr/bin/sudo", str(helper), "exit"], timeout=10, check=False
+    )
+    if result.returncode != 0:
+        return jsonify(
+            ok=False,
+            data=None,
+            error={"code": "exit_failed", "message": "Could not exit the kiosk"},
+        ), 500
+    return jsonify(ok=True, data={"exiting": True}, error=None), 202
 
 
 @bp.get("/media/<int:item_id>/<generation_key>/<path:filename>")

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Playlists — Pi-Agenda{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Playlists</h1><p>Scheduled playlists take priority. The default playlist runs when no scheduled playlist is active.</p></div></div>
+<section class="playlist-card-grid">
+{% for playlist in playlists %}
+  <article class="panel playlist-card">
+    <div><h2>{{ playlist.name }} {% if playlist.is_default %}<span class="badge ok">Default</span>{% endif %}</h2>
+    <p>{{ playlist.item_count }} item{{ '' if playlist.item_count == 1 else 's' }} · {% if playlist.is_default %}Fallback whenever no scheduled playlist is active{% elif playlist.start_time %}{{ playlist.start_time }}–{{ playlist.end_time }}{% else %}All day on selected days{% endif %}</p></div>
+    <a class="button primary" href="{{ url_for('admin.playlist_detail', playlist_id=playlist.id) }}">View and edit</a>
+  </article>
+{% endfor %}
+</section>
+<form id="new-playlist-form" class="panel form-grid">
+  <div class="span-2"><h2>Create playlist</h2><p>A playlist can represent a class period, subject, event, or recurring block.</p></div>
+  <label>Name<input name="name" required maxlength="100" placeholder="First period science"></label>
+  <label>Enabled<select name="enabled"><option value="1">Yes</option><option value="0">No</option></select></label>
+  <fieldset class="span-2"><legend>Active days</legend><div class="day-picker">
+    {% for index, day in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}<label><input type="checkbox" name="playlist_day" value="{{ index }}" checked>{{ day }}</label>{% endfor %}
+  </div></fieldset>
+  <label>Start time (optional)<input name="start_time" type="time"></label>
+  <label>End time (optional)<input name="end_time" type="time"></label>
+  <div class="span-2 form-actions"><button class="primary" type="submit">Create playlist</button></div>
+</form>
+{% endblock %}

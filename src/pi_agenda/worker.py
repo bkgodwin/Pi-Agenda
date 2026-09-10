@@ -114,10 +114,13 @@ def process_item_job(config: RuntimeConfig, conn, job) -> None:
                 max_total_bytes=config.max_archive_bytes,
                 screenshot_size=size,
             )
+            screenshot = staging / "screenshot.png"
+            if (
+                item["render_mode"] in {"auto", "screenshot"}
+                and not screenshot.is_file()
+            ):
+                raise PipelineError("Website screenshot could not be generated")
             if item["render_mode"] == "screenshot":
-                screenshot = staging / "screenshot.png"
-                if not screenshot.is_file():
-                    raise PipelineError("Website screenshot could not be generated")
                 for child in list(staging.iterdir()):
                     if child.name not in {"screenshot.png", "thumbnail.jpg"}:
                         shutil.rmtree(

@@ -3,8 +3,9 @@
 (() => {
   const stage = document.getElementById("stage");
   const statusDot = document.getElementById("connection-status");
+  const exitToken = document.querySelector('meta[name="kiosk-exit-token"]')?.content || "";
   let playlist = [];
-  let playlistVersion = null;
+  let playlistSelection = null;
   let etag = null;
   let index = 0;
   let currentTimer = null;
@@ -51,9 +52,16 @@
       frame.src = item.render_url;
       frame.title = item.name;
       frame.referrerPolicy = "no-referrer";
-      frame.sandbox = "allow-scripts allow-same-origin allow-presentation";
+      frame.sandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-downloads";
       frame.allow = "autoplay; fullscreen";
-      return frame;
+      const shell = document.createElement("div");
+      shell.className = "frame-shell";
+      const zoom = Math.max(50, Math.min(200, Number(item.web_zoom || 100))) / 100;
+      frame.style.width = `${100 / zoom}%`;
+      frame.style.height = `${100 / zoom}%`;
+      frame.style.transform = `scale(${zoom})`;
+      shell.append(frame);
+      return shell;
     }
     if (item.render_kind === "video") {
       const video = document.createElement("video");
@@ -64,6 +72,16 @@
       video.volume = Math.max(0, Math.min(1, item.volume / 100));
       video.muted = item.volume === 0;
       return video;
+    }
+    if (item.render_kind === "announcement") {
+      const announcement = document.createElement("section");
+      announcement.className = "announcement-slide";
+      announcement.textContent = item.message;
+      announcement.style.background = item.background_color;
+      announcement.style.color = item.text_color;
+      announcement.style.fontSize = `${item.text_size}px`;
+      announcement.style.textAlign = item.text_align;
+      return announcement;
     }
     const image = document.createElement("img");
     image.src = item.render_url;
@@ -78,12 +96,19 @@
     image.alt = item.name;
     image.className = `fit-${item.fit_mode}`;
     stage.append(image);
+    image.addEventListener("error", () => playbackFailed(item));
     const advance = () => {
       if (slide >= item.slides.length) return done();
       image.src = item.slides[slide++];
       currentTimer = window.setTimeout(advance, item.slide_sec * 1000);
     };
     advance();
+  }
+
+  function playbackFailed(item) {
+    if (currentTimer) window.clearTimeout(currentTimer);
+    setStatus("red", `${item.name} could not be displayed; advancing`);
+    currentTimer = window.setTimeout(showNext, 2000);
   }
 
   function showNext() {
@@ -106,8 +131,10 @@
       return;
     }
     const element = mediaElement(item);
-    element.classList.add(`fit-${item.fit_mode}`);
+    if (item.render_kind !== "iframe" && item.render_kind !== "announcement") element.classList.add(`fit-${item.fit_mode}`);
     stage.append(element);
+    if (["image", "video"].includes(item.render_kind)) element.addEventListener("error", () => playbackFailed(item), {once: true});
+    if (item.render_kind === "video") element.play().catch(() => playbackFailed(item));
     currentTimer = window.setTimeout(showNext, Math.max(1, item.dwell_sec) * 1000);
   }
 
@@ -125,11 +152,12 @@
       const data = envelope.data;
       pollFailures = 0;
       displayOn = data.display_on;
-      if (data.version !== playlistVersion) {
-        playlistVersion = data.version;
+      if (data.selection_key !== playlistSelection) {
+        playlistSelection = data.selection_key;
         playlist = data.items;
         index = 0;
-        if (!stage.firstElementChild || stage.firstElementChild.classList.contains("standby")) showNext();
+        if (!playlist.length && data.display_on) standby("No content is active for the current schedules");
+        else if (!stage.firstElementChild || stage.firstElementChild.classList.contains("standby")) showNext();
       }
       if (!data.online) setStatus("amber", "Internet unavailable; using verified local content");
       if (!displayOn) blackout();
@@ -155,6 +183,16 @@
 
   window.addEventListener("online", () => fetchPlaylist());
   window.addEventListener("offline", () => setStatus("amber", "Network unavailable"));
+  window.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    fetch("/api/kiosk/exit", {
+      method: "POST",
+      cache: "no-store",
+      headers: {"X-Pi-Agenda-Player-Token": exitToken},
+    })
+      .catch(() => setStatus("red", "Could not exit kiosk"));
+  });
   fetchPlaylist();
   window.setInterval(fetchPlaylist, 15000);
   window.setInterval(() => sendHeartbeat(displayOn ? "playing" : "black", currentItemId), 30000);

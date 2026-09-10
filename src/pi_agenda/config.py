@@ -77,6 +77,8 @@ DEFAULT_SETTINGS = {
     "internet_online": "0",
     "internet_checked_at": "",
     "last_daily_refresh_date": "",
+    "blank_test_enabled": "0",
+    "holiday_until": "",
     "display_power_state": "unknown",
     "display_desired_state": "unknown",
     "display_power_pending_at": "",

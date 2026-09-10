@@ -29,6 +29,15 @@ from .jobs import enqueue_job
 from .models import create_item, delete_item, serialize_item, update_item
 from .pipelines.m365 import normalize_m365_input
 from .playlist import build_playlist
+from .playlist_models import (
+    assign_item_to_playlists,
+    create_playlist,
+    delete_playlist,
+    playlist_ids_for_item,
+    set_default_playlist,
+    update_playlist,
+    validate_playlist_ids,
+)
 from .schedules import parse_hhmm, validate_window
 from .security import api_login_required, validate_csrf, validate_remote_url
 
@@ -48,6 +57,29 @@ def error(code: str, message: str, status: int = 400):
 def payload() -> dict:
     candidate = request.get_json(silent=True)
     return candidate if isinstance(candidate, dict) else request.form.to_dict()
+
+
+def _playlist_selection(values: dict) -> tuple[list[int] | None, dict]:
+    clean = dict(values)
+    marker = clean.pop("playlist_selection", None)
+    raw = clean.pop("playlist_ids", None)
+    if request.form:
+        raw_values = request.form.getlist("playlist_ids")
+        if raw_values or marker is not None:
+            raw = raw_values
+    if raw is None and marker is None:
+        return None, clean
+    if not isinstance(raw, list):
+        raw = [raw] if raw not in {None, ""} else []
+    try:
+        return [int(value) for value in raw], clean
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Playlist selection is invalid") from exc
+
+
+def _default_playlist_ids(conn) -> list[int]:
+    row = conn.execute("SELECT id FROM playlists WHERE is_default = 1").fetchone()
+    return [int(row["id"])] if row else []
 
 
 @bp.get("/ready")
@@ -118,6 +150,11 @@ def add_item():
     try:
         if request.files:
             values, uploaded = _create_upload()
+            playlist_ids, values = _playlist_selection(values)
+            assignment_ids = validate_playlist_ids(
+                conn,
+                _default_playlist_ids(conn) if playlist_ids is None else playlist_ids,
+            )
             _check_storage(request.content_length or 0)
             item_id = create_item(conn, values)
             extension = Path(uploaded.filename).suffix.lower()
@@ -136,10 +173,27 @@ def add_item():
             job_id = enqueue_job(conn, "convert", item_id)
         else:
             values = payload()
+            playlist_ids, values = _playlist_selection(values)
+            assignment_ids = validate_playlist_ids(
+                conn,
+                _default_playlist_ids(conn) if playlist_ids is None else playlist_ids,
+            )
             item_type = values.get("type")
-            if item_type not in {"url", "ppt_link"}:
+            if item_type not in {"url", "ppt_link", "announcement"}:
                 raise ValueError("Uploads must use multipart form data")
-            if item_type == "url":
+            if item_type == "announcement":
+                values["source"] = str(
+                    values.pop("announcement_text", values.get("source", ""))
+                ).strip()
+                item_id = create_item(conn, values)
+                now = utcnow()
+                conn.execute(
+                    """UPDATE media_items SET last_status = 'ok', last_checked = ?,
+                         last_good_at = ? WHERE id = ?""",
+                    (now, now, item_id),
+                )
+                job_id = None
+            elif item_type == "url":
                 allowlist = {
                     host.strip().lower()
                     for host in get_setting(conn, "intranet_allowlist", "").split(",")
@@ -152,8 +206,10 @@ def add_item():
                 normalized = normalize_m365_input(str(values.get("source", "")))
                 values["source"] = normalized
                 values["embed_url"] = normalized
-            item_id = create_item(conn, values)
-            job_id = enqueue_job(conn, "refresh", item_id)
+            if item_type != "announcement":
+                item_id = create_item(conn, values)
+                job_id = enqueue_job(conn, "refresh", item_id)
+        assign_item_to_playlists(conn, item_id, assignment_ids)
         return ok({"id": item_id, "job_id": job_id}, 201)
     except ValueError as exc:
         return error("invalid_item", str(exc))
@@ -169,7 +225,11 @@ def get_item(item_id: int):
         )
         .fetchone()
     )
-    return ok(serialize_item(row)) if row else error("not_found", "Item not found", 404)
+    if not row:
+        return error("not_found", "Item not found", 404)
+    result = serialize_item(row)
+    result["playlist_ids"] = playlist_ids_for_item(get_db(), item_id)
+    return ok(result)
 
 
 @bp.patch("/items/<int:item_id>")
@@ -177,8 +237,53 @@ def get_item(item_id: int):
 def patch_item(item_id: int):
     validate_csrf()
     try:
-        update_item(get_db(), item_id, payload())
-        return ok({"id": item_id})
+        conn = get_db()
+        playlist_ids, values = _playlist_selection(payload())
+        current = conn.execute(
+            "SELECT * FROM media_items WHERE id = ? AND deleted_at IS NULL", (item_id,)
+        ).fetchone()
+        if not current:
+            raise LookupError("Item not found")
+        if playlist_ids is not None:
+            playlist_ids = validate_playlist_ids(conn, playlist_ids)
+        if current["type"] == "announcement":
+            values["source"] = values.pop("announcement_text", values.get("source", ""))
+        else:
+            values.pop("announcement_text", None)
+        if current["type"] in {"ppt_file", "pdf_deck", "image", "video"}:
+            # The source textarea exists but is hidden for uploaded media. Source
+            # replacement is handled only by the dedicated upload endpoint.
+            values.pop("source", None)
+        elif "source" in values and current["type"] == "url":
+            allowlist = {
+                host.strip().lower()
+                for host in get_setting(conn, "intranet_allowlist", "").split(",")
+                if host.strip()
+            }
+            values["source"] = validate_remote_url(str(values["source"]), allowlist)
+        elif "source" in values and current["type"] == "ppt_link":
+            values["source"] = normalize_m365_input(str(values["source"]))
+            values["embed_url"] = values["source"]
+        update_item(conn, item_id, values)
+        if playlist_ids is not None:
+            assign_item_to_playlists(conn, item_id, playlist_ids)
+        job_id = None
+        if current["type"] in {"url", "ppt_link"} and (
+            "source" in values or "render_mode" in values
+        ):
+            job_id = enqueue_job(conn, "refresh", item_id)
+            conn.execute(
+                "UPDATE jobs SET not_before = ? WHERE id = ? AND state = 'queued'",
+                (utcnow(), job_id),
+            )
+        if current["type"] == "announcement":
+            now = utcnow()
+            conn.execute(
+                """UPDATE media_items SET last_status = 'ok', last_checked = ?,
+                     last_good_at = ?, last_error = NULL WHERE id = ?""",
+                (now, now, item_id),
+            )
+        return ok({"id": item_id, "job_id": job_id})
     except ValueError as exc:
         return error("invalid_item", str(exc))
     except LookupError as exc:
@@ -202,11 +307,19 @@ def remove_item(item_id: int):
 def refresh_item(item_id: int):
     validate_csrf()
     conn = get_db()
-    if not conn.execute(
-        "SELECT 1 FROM media_items WHERE id = ? AND deleted_at IS NULL", (item_id,)
-    ).fetchone():
+    item = conn.execute(
+        "SELECT type FROM media_items WHERE id = ? AND deleted_at IS NULL", (item_id,)
+    ).fetchone()
+    if not item:
         return error("not_found", "Item not found", 404)
-    return ok({"job_id": enqueue_job(conn, "refresh", item_id)}, 202)
+    if item["type"] == "announcement":
+        return error("not_refreshable", "Announcements do not require refresh", 400)
+    job_id = enqueue_job(conn, "refresh", item_id)
+    conn.execute(
+        "UPDATE jobs SET not_before = ?, stage = 'queued manually' WHERE id = ? AND state = 'queued'",
+        (utcnow(), job_id),
+    )
+    return ok({"job_id": job_id}, 202)
 
 
 @bp.post("/items/<int:item_id>/replace")
@@ -270,9 +383,21 @@ def duplicate_item(item_id: int):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         update_item(conn, new_id, {"source": target_rel.as_posix()})
-    job_id = enqueue_job(
-        conn, "convert" if row["type"] not in {"url", "ppt_link"} else "refresh", new_id
-    )
+    assign_item_to_playlists(conn, new_id, playlist_ids_for_item(conn, item_id))
+    if row["type"] == "announcement":
+        now = utcnow()
+        conn.execute(
+            """UPDATE media_items SET last_status = 'ok', last_checked = ?,
+                 last_good_at = ? WHERE id = ?""",
+            (now, now, new_id),
+        )
+        job_id = None
+    else:
+        job_id = enqueue_job(
+            conn,
+            "convert" if row["type"] not in {"url", "ppt_link"} else "refresh",
+            new_id,
+        )
     return ok({"id": new_id, "job_id": job_id}, 201)
 
 
@@ -299,6 +424,97 @@ def reorder_items():
             conn.execute(
                 "UPDATE media_items SET sort_order = ?, updated_at = ? WHERE id = ?",
                 (position, utcnow(), item_id),
+            )
+        bump_playlist_version(conn)
+    return ok({"order": order})
+
+
+@bp.get("/playlists")
+@api_login_required
+def list_playlists():
+    rows = get_db().execute(
+        """SELECT p.*, COUNT(m.id) item_count
+           FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id = p.id
+           LEFT JOIN media_items m ON m.id = pi.media_item_id AND m.deleted_at IS NULL
+           GROUP BY p.id ORDER BY p.is_default DESC, p.sort_order, p.id"""
+    )
+    return ok([dict(row) for row in rows])
+
+
+@bp.post("/playlists")
+@api_login_required
+def add_playlist():
+    validate_csrf()
+    try:
+        return ok({"id": create_playlist(get_db(), payload())}, 201)
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        return error("invalid_playlist", str(exc))
+
+
+@bp.patch("/playlists/<int:playlist_id>")
+@api_login_required
+def patch_playlist(playlist_id: int):
+    validate_csrf()
+    try:
+        update_playlist(get_db(), playlist_id, payload())
+        return ok({"id": playlist_id})
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        return error("invalid_playlist", str(exc))
+    except LookupError as exc:
+        return error("not_found", str(exc), 404)
+
+
+@bp.delete("/playlists/<int:playlist_id>")
+@api_login_required
+def remove_playlist(playlist_id: int):
+    validate_csrf()
+    try:
+        delete_playlist(get_db(), playlist_id)
+        return ok({"id": playlist_id})
+    except ValueError as exc:
+        return error("invalid_playlist", str(exc))
+    except LookupError as exc:
+        return error("not_found", str(exc), 404)
+
+
+@bp.post("/playlists/<int:playlist_id>/default")
+@api_login_required
+def make_default_playlist(playlist_id: int):
+    validate_csrf()
+    try:
+        set_default_playlist(get_db(), playlist_id)
+        return ok({"id": playlist_id})
+    except LookupError as exc:
+        return error("not_found", str(exc), 404)
+
+
+@bp.post("/playlists/<int:playlist_id>/reorder")
+@api_login_required
+def reorder_playlist_items(playlist_id: int):
+    validate_csrf()
+    order = payload().get("order")
+    if not isinstance(order, list) or not all(
+        isinstance(value, int) for value in order
+    ):
+        return error("invalid_order", "order must be a list of item IDs")
+    conn = get_db()
+    existing = [
+        row["media_item_id"]
+        for row in conn.execute(
+            """SELECT pi.media_item_id FROM playlist_items pi
+               JOIN media_items m ON m.id = pi.media_item_id
+               WHERE pi.playlist_id = ? AND m.deleted_at IS NULL""",
+            (playlist_id,),
+        )
+    ]
+    if sorted(order) != sorted(existing) or len(order) != len(set(order)):
+        return error("invalid_order", "order must contain every playlist item once")
+    with transaction(conn):
+        for position, item_id in enumerate(order):
+            conn.execute(
+                """UPDATE playlist_items SET sort_order = ?
+                   WHERE playlist_id = ? AND media_item_id = ?""",
+                (position, playlist_id, item_id),
             )
         bump_playlist_version(conn)
     return ok({"order": order})
@@ -429,8 +645,52 @@ def display_status():
             "up_next": up_next,
             "heartbeat": get_setting(conn, "player_heartbeat", ""),
             "power_state": get_setting(conn, "display_power_state", "unknown"),
+            "display_off_reason": playlist["display_off_reason"],
+            "active_playlists": playlist["active_playlists"],
+            "holiday_until": get_setting(conn, "holiday_until", ""),
+            "blank_test_enabled": get_setting(conn, "blank_test_enabled", "0") == "1",
         }
     )
+
+
+@bp.post("/display/test-blank")
+@api_login_required
+def test_screen_blank():
+    validate_csrf()
+    state = payload().get("state")
+    if state not in {"start", "stop"}:
+        return error("invalid_blank_test", "state must be start or stop")
+    conn = get_db()
+    set_setting(conn, "blank_test_enabled", "1" if state == "start" else "0")
+    bump_playlist_version(conn)
+    return ok({"active": state == "start"})
+
+
+@bp.post("/display/holiday")
+@api_login_required
+def start_holiday():
+    validate_csrf()
+    try:
+        days = int(payload().get("days", 1))
+    except (TypeError, ValueError):
+        return error("invalid_holiday", "Holiday length must be a number")
+    if not 1 <= days <= 365:
+        return error("invalid_holiday", "Holiday length must be between 1 and 365 days")
+    until = datetime.now(UTC) + timedelta(days=days)
+    conn = get_db()
+    set_setting(conn, "holiday_until", until.isoformat(timespec="seconds"))
+    bump_playlist_version(conn)
+    return ok({"until": until.isoformat(timespec="seconds")})
+
+
+@bp.delete("/display/holiday")
+@api_login_required
+def cancel_holiday():
+    validate_csrf()
+    conn = get_db()
+    set_setting(conn, "holiday_until", "")
+    bump_playlist_version(conn)
+    return ok({"cancelled": True})
 
 
 SETTABLE_SETTINGS = {
@@ -473,8 +733,13 @@ def put_settings():
     try:
         if "timezone" in values:
             ZoneInfo(str(values["timezone"]))
-        if "check_time" in values:
-            parse_hhmm(str(values["check_time"]))
+        if "check_time" in values and parse_hhmm(str(values["check_time"])) is None:
+            raise ValueError("Daily refresh time is required")
+        if (
+            "site_name" in values
+            and not 1 <= len(str(values["site_name"]).strip()) <= 100
+        ):
+            raise ValueError("Site name must be between 1 and 100 characters")
         for key, minimum, maximum in (
             ("default_duration_sec", 1, 86400),
             ("default_slide_sec", 1, 3600),
@@ -499,7 +764,8 @@ def put_settings():
         bump_playlist_version(conn)
         if values.get("resolution") and values["resolution"] != old_resolution:
             rows = conn.execute(
-                "SELECT id FROM media_items WHERE type IN ('ppt_file','pdf_deck','image','video')"
+                """SELECT id FROM media_items
+                   WHERE deleted_at IS NULL AND type != 'announcement'"""
             ).fetchall()
             for row in rows:
                 enqueue_job(conn, "rerender", row["id"])
@@ -510,6 +776,7 @@ def put_settings():
 @api_login_required
 def system_status():
     config = current_app.config["RUNTIME_CONFIG"]
+    conn = get_db()
     usage = shutil.disk_usage(config.data_dir)
     temperature = None
     thermal = Path("/sys/class/thermal/thermal_zone0/temp")
@@ -525,10 +792,10 @@ def system_status():
             "disk": {"total": usage.total, "used": usage.used, "free": usage.free},
             "temperature_c": temperature,
             "uptime_sec": int(datetime.now(UTC).timestamp() - psutil.boot_time()),
-            "online": get_setting(get_db(), "internet_online", "0") == "1",
-            "display_power_state": get_setting(
-                get_db(), "display_power_state", "unknown"
-            ),
+            "online": get_setting(conn, "internet_online", "0") == "1",
+            "display_power_state": get_setting(conn, "display_power_state", "unknown"),
+            "blank_test_enabled": get_setting(conn, "blank_test_enabled", "0") == "1",
+            "holiday_until": get_setting(conn, "holiday_until", ""),
         }
     )
 
@@ -557,7 +824,9 @@ def refresh_all():
     conn = get_db()
     ids = [
         row["id"]
-        for row in conn.execute("SELECT id FROM media_items WHERE deleted_at IS NULL")
+        for row in conn.execute(
+            "SELECT id FROM media_items WHERE deleted_at IS NULL AND type != 'announcement'"
+        )
     ]
     jobs = [enqueue_job(conn, "refresh", item_id) for item_id in ids]
     return ok({"jobs": jobs}, 202)
@@ -716,4 +985,61 @@ def reboot():
         ok({"requested": True}, 202)
         if result.returncode == 0
         else error("reboot_failed", "Reboot request failed", 500)
+    )
+
+
+@bp.post("/system/update")
+@api_login_required
+def update_system():
+    validate_csrf()
+    helper = Path("/usr/local/libexec/pi-agenda-update")
+    if not helper.is_file():
+        return error(
+            "unavailable",
+            "Update helper is not installed. Run sudo ./start.sh --repair once over SSH.",
+            503,
+        )
+    import subprocess
+
+    try:
+        check = subprocess.run(
+            ["/usr/bin/sudo", str(helper), "check"],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return error("update_check_failed", "Could not contact GitHub for updates", 503)
+    if check.returncode != 0:
+        return error(
+            "update_check_failed",
+            (check.stderr.strip() or "Could not contact GitHub for updates")[-500:],
+            503,
+        )
+    versions = {}
+    for line in check.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in {"current", "latest"}:
+            versions[key] = value.strip()
+    latest = versions.get("latest", "")
+    current = versions.get("current", "unknown")
+    if len(latest) != 40 or any(
+        character not in "0123456789abcdef" for character in latest
+    ):
+        return error(
+            "update_check_failed", "Update service returned an invalid version", 503
+        )
+    if current == latest:
+        return ok({"up_to_date": True, "version": current})
+    scheduled = subprocess.run(
+        ["/usr/bin/sudo", str(helper), "update", latest],
+        timeout=15,
+        check=False,
+    )
+    if scheduled.returncode != 0:
+        return error("update_failed", "The update could not be scheduled", 500)
+    return ok(
+        {"up_to_date": False, "scheduled": True, "from": current, "to": latest},
+        202,
     )
