@@ -70,10 +70,9 @@ def schedule_paused(conn) -> bool:
 def display_should_be_on(conn, now_utc: datetime, timezone_name: str) -> bool:
     if forced_display_off_reason(conn, now_utc):
         return False
-    if schedule_paused(conn):
-        # Pausing pins the current playlist and keeps the display on
-        # indefinitely until resumed. Blank/holiday above still force off.
-        return True
+    # A paused schedule freezes playlist *selection* (see playlist.py) but the
+    # display power schedule still applies, so Time Window days blank the
+    # screen outside the window even while paused.
     local_now = now_utc.astimezone(ZoneInfo(timezone_name))
     override = conn.execute(
         "SELECT state, expires_at FROM manual_display_override WHERE singleton = 1"
@@ -137,8 +136,6 @@ def display_off_reason(conn, now_utc: datetime, timezone_name: str) -> str | Non
     forced = forced_display_off_reason(conn, now_utc)
     if forced:
         return forced
-    if schedule_paused(conn):
-        return None
     return None if display_should_be_on(conn, now_utc, timezone_name) else "schedule"
 
 

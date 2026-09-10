@@ -193,15 +193,27 @@ OPENBOX
 set -Eeuo pipefail
 export DISPLAY=:0
 export XAUTHORITY=/var/lib/pi-agenda/.Xauthority
+echo "pi-agenda-kiosk: starting X session"
 xset s off
 xset s noblank
 openbox --config-file /var/lib/pi-agenda/.config/openbox/rc.xml &
-unclutter -idle 2 -root &
+# Hide the pointer immediately: this is a non-interactive display and a
+# lingering cursor otherwise looks like a hung boot when X is up but the
+# browser is still starting.
+unclutter -idle 0 -root &
 port="${PI_AGENDA_PORT:-8000}"
+ready=0
 for _ in $(seq 1 60); do
-  curl --fail --silent "http://127.0.0.1:${port}/api/ready" >/dev/null && break
+  if curl --fail --silent "http://127.0.0.1:${port}/api/ready" >/dev/null; then
+    ready=1
+    break
+  fi
   sleep 1
 done
+if [[ "$ready" -ne 1 ]]; then
+  echo "pi-agenda-kiosk: backend not ready after 60s; launching browser anyway" >&2
+fi
+echo "pi-agenda-kiosk: launching chromium"
 exec chromium \
   --kiosk --noerrdialogs --disable-translate --disable-infobars --no-first-run \
   --disable-dev-shm-usage --autoplay-policy=no-user-gesture-required \
