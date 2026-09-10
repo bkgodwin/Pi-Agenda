@@ -9,6 +9,20 @@ def test_display_helper_disables_and_verifies_the_output_signal():
     assert "Firmware display power state did not become" in script
 
 
+def test_kiosk_disables_x11_idle_power_management():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    kiosk_start, display_helper = script.split(
+        "cat >/usr/local/libexec/pi-agenda-display", maxsplit=1
+    )
+    assert "xset s off" in kiosk_start
+    assert "xset s noblank" in kiosk_start
+    assert "xset -dpms" in kiosk_start
+    helper_body = display_helper.split("\n", maxsplit=1)[1].split(
+        "\nDISPLAY_HELPER", maxsplit=1
+    )[0]
+    assert "xset -dpms" in helper_body
+
+
 def test_repair_reinstalls_the_app_package_despite_an_unchanged_version():
     script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
     # Services import pi-agenda from the venv's site-packages (src layout), so a

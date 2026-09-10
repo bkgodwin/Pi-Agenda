@@ -196,6 +196,10 @@ export XAUTHORITY=/var/lib/pi-agenda/.Xauthority
 echo "pi-agenda-kiosk: starting X session"
 xset s off
 xset s noblank
+# Playlist transitions do not count as X11 input, so the server's default DPMS
+# idle timer can otherwise power down the display during an active rotation.
+# Pi-Agenda controls display power explicitly through pi-agenda-display.
+xset -dpms
 openbox --config-file /var/lib/pi-agenda/.config/openbox/rc.xml &
 # Hide the pointer immediately: this is a non-interactive display and a
 # lingering cursor otherwise looks like a hung boot when X is up but the
@@ -234,6 +238,9 @@ if [[ -n "$output" ]]; then
   if [[ "$state" == "on" ]]; then
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --output "$output" --auto
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xset dpms force on || true
+    # Restoring an explicitly blanked display must not also restore X11's
+    # inactivity timer; only the Pi-Agenda schedule should power it down.
+    runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xset -dpms
   else
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xset dpms force off || true
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --output "$output" --off
