@@ -30,6 +30,8 @@ jobs:
           node --check src/pi_agenda/static/admin.js
           node --check src/pi_agenda/static/player.js
           node --check src/pi_agenda/static/startup.js
+      - name: Player behavior
+        run: node --test tests/player_schedule_boundary.test.js
       - name: Test
         run: pytest
       - name: Build wheel

@@ -13,6 +13,7 @@
   let etag = null;
   let index = 0;
   let currentTimer = null;
+  let playbackGeneration = 0;
   let pollFailures = 0;
   let displayOn = true;
   let currentItemId = null;
@@ -73,6 +74,7 @@
   function clearStage() {
     if (currentTimer) window.clearTimeout(currentTimer);
     currentTimer = null;
+    playbackGeneration += 1;
     stage.replaceChildren();
   }
 
@@ -144,14 +146,15 @@
     return image;
   }
 
-  function showDeck(item, done) {
+  function showDeck(item, generation, done) {
     let slide = 0;
     const image = document.createElement("img");
     image.alt = item.name;
     image.className = `fit-${item.fit_mode}`;
     stage.append(image);
-    image.addEventListener("error", () => playbackFailed(item));
+    image.addEventListener("error", () => playbackFailed(item, generation));
     const advance = () => {
+      if (generation !== playbackGeneration) return;
       if (slide >= item.slides.length) return done();
       image.src = item.slides[slide++];
       currentTimer = window.setTimeout(advance, item.slide_sec * 1000);
@@ -159,7 +162,8 @@
     advance();
   }
 
-  function playbackFailed(item) {
+  function playbackFailed(item, generation) {
+    if (generation !== playbackGeneration) return;
     if (currentTimer) window.clearTimeout(currentTimer);
     setStatus("red", `${item.name} could not be displayed; advancing`);
     currentTimer = window.setTimeout(showNext, 2000);
@@ -171,6 +175,7 @@
     }
     if (!playlist.length) return standby();
     clearStage();
+    const generation = playbackGeneration;
     if (index >= playlist.length) index = 0;
     const item = playlist[index++];
     currentItemId = item.id;
@@ -182,14 +187,14 @@
       setStatus("green", "Content ready");
     }
     if (item.render_kind === "deck") {
-      showDeck(item, showNext);
+      showDeck(item, generation, showNext);
       return;
     }
     const element = mediaElement(item);
     if (item.render_kind !== "iframe" && item.render_kind !== "announcement") element.classList.add(`fit-${item.fit_mode}`);
     stage.append(element);
-    if (["image", "video"].includes(item.render_kind)) element.addEventListener("error", () => playbackFailed(item), {once: true});
-    if (item.render_kind === "video") element.play().catch(() => playbackFailed(item));
+    if (["image", "video"].includes(item.render_kind)) element.addEventListener("error", () => playbackFailed(item, generation), {once: true});
+    if (item.render_kind === "video") element.play().catch(() => playbackFailed(item, generation));
     currentTimer = window.setTimeout(showNext, Math.max(1, item.dwell_sec) * 1000);
   }
 
@@ -209,16 +214,23 @@
       displayOn = data.display_on;
       widgetConfig = data.widgets;
       progressWindow = data.progress_window;
-      if (data.selection_key !== playlistSelection) {
+      const selectionChanged = data.selection_key !== playlistSelection;
+      if (selectionChanged) {
         playlistSelection = data.selection_key;
         playlist = data.items;
         index = 0;
-        if (!playlist.length && data.display_on) standby("No content is active for the current schedules");
-        else if (!stage.firstElementChild || stage.firstElementChild.classList.contains("standby")) showNext();
+        // A selection-key change means a schedule boundary or an administrative
+        // change replaced the active rotation. Cancel the current item's timer
+        // and media immediately instead of waiting for its dwell time to end.
+        if (!displayOn) blackout();
+        else if (!playlist.length) standby("No content is active for the current schedules");
+        else showNext();
       }
       if (!data.online) setStatus("amber", "Internet unavailable; using verified local content");
-      if (!displayOn) blackout();
-      else renderWidgets();
+      if (!selectionChanged) {
+        if (!displayOn) blackout();
+        else renderWidgets();
+      }
     } catch (error) {
       pollFailures += 1;
       if (pollFailures >= 3) setStatus("amber", "Backend unavailable; continuing cached playlist");

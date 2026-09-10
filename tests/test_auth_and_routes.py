@@ -4,7 +4,7 @@ import re
 import subprocess
 from types import SimpleNamespace
 
-from pi_agenda import routes_api
+from pi_agenda import routes_api, routes_player
 from pi_agenda.db import set_setting
 
 
@@ -140,6 +140,30 @@ def test_player_heartbeat_and_admin_display_status(authenticated_client):
     status = authenticated_client.get("/api/display/status")
     assert status.status_code == 200
     assert status.get_json()["data"]["heartbeat"]
+
+
+def test_playlist_etag_changes_immediately_with_scheduled_selection(
+    client, monkeypatch
+):
+    selection = {"key": "morning"}
+
+    def playlist(_conn, *, cache_port):
+        return {
+            "version": 1,
+            "selection_key": selection["key"],
+            "items": [],
+        }
+
+    monkeypatch.setattr(routes_player, "build_playlist", playlist)
+    first = client.get("/api/playlist-now")
+    assert first.status_code == 200
+
+    selection["key"] = "default"
+    changed = client.get(
+        "/api/playlist-now", headers={"If-None-Match": first.headers["ETag"]}
+    )
+    assert changed.status_code == 200
+    assert changed.get_json()["data"]["selection_key"] == "default"
 
 
 def test_update_reports_already_current(authenticated_client, monkeypatch):
