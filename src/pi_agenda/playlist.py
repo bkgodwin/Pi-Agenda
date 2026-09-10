@@ -41,7 +41,11 @@ def _progress_window(playlists: list[dict], local_now: datetime) -> dict | None:
     """Find the first active, timed non-default playlist window."""
     current_time = local_now.timetz().replace(tzinfo=None)
     for playlist in playlists:
-        if playlist["is_default"] or not playlist.get("start_time") or not playlist.get("end_time"):
+        if (
+            playlist["is_default"]
+            or not playlist.get("start_time")
+            or not playlist.get("end_time")
+        ):
             continue
         start_time = parse_hhmm(playlist["start_time"])
         end_time = parse_hhmm(playlist["end_time"])
@@ -54,9 +58,13 @@ def _progress_window(playlists: list[dict], local_now: datetime) -> dict | None:
             end = datetime.combine(local_now.date(), end_time, local_now.tzinfo)
         elif current_time >= start_time:
             start = datetime.combine(local_now.date(), start_time, local_now.tzinfo)
-            end = datetime.combine(local_now.date() + timedelta(days=1), end_time, local_now.tzinfo)
+            end = datetime.combine(
+                local_now.date() + timedelta(days=1), end_time, local_now.tzinfo
+            )
         elif current_time < end_time:
-            start = datetime.combine(local_now.date() - timedelta(days=1), start_time, local_now.tzinfo)
+            start = datetime.combine(
+                local_now.date() - timedelta(days=1), start_time, local_now.tzinfo
+            )
             end = datetime.combine(local_now.date(), end_time, local_now.tzinfo)
         else:
             continue

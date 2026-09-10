@@ -903,12 +903,26 @@ def put_widgets():
     values = payload()
     unknown = set(values) - WIDGET_SETTINGS
     if unknown:
-        return error("invalid_widget", f"Unknown widget settings: {', '.join(sorted(unknown))}")
+        return error(
+            "invalid_widget", f"Unknown widget settings: {', '.join(sorted(unknown))}"
+        )
     try:
-        for key in ("clock_widget_enabled", "progress_widget_enabled", "ticker_widget_enabled"):
+        for key in (
+            "clock_widget_enabled",
+            "progress_widget_enabled",
+            "ticker_widget_enabled",
+        ):
             if key in values and str(values[key]) not in {"0", "1"}:
                 raise ValueError(f"{key} must be 0 or 1")
-        if values.get("clock_widget_position") not in {None, "top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"}:
+        if values.get("clock_widget_position") not in {
+            None,
+            "top-left",
+            "top-center",
+            "top-right",
+            "bottom-left",
+            "bottom-center",
+            "bottom-right",
+        }:
             raise ValueError("Invalid clock position")
         if values.get("progress_widget_position") not in {None, "top", "bottom"}:
             raise ValueError("Invalid progress position")
@@ -922,9 +936,14 @@ def put_widgets():
             if key in values and not minimum <= int(values[key]) <= maximum:
                 raise ValueError(f"{key} is outside its allowed range")
         color = str(values.get("progress_widget_color", "#000000"))
-        if "progress_widget_color" in values and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        if "progress_widget_color" in values and not re.fullmatch(
+            r"#[0-9a-fA-F]{6}", color
+        ):
             raise ValueError("Progress color must be a six-digit hex color")
-        if "ticker_widget_text" in values and len(str(values["ticker_widget_text"])) > 500:
+        if (
+            "ticker_widget_text" in values
+            and len(str(values["ticker_widget_text"])) > 500
+        ):
             raise ValueError("Ticker text cannot exceed 500 characters")
     except (TypeError, ValueError) as exc:
         return error("invalid_widget", str(exc))

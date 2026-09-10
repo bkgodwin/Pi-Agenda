@@ -284,7 +284,12 @@ def test_widget_settings_and_timed_playlist_progress(authenticated_client, db):
     db.execute("UPDATE display_schedule SET mode = 'always_on' WHERE weekday = 0")
     playlist_id = create_playlist(
         db,
-        {"name": "Second period", "days_mask": 1, "start_time": "09:00", "end_time": "10:00"},
+        {
+            "name": "Second period",
+            "days_mask": 1,
+            "start_time": "09:00",
+            "end_time": "10:00",
+        },
     )
     item_id = create_item(db, _announcement("Period note", "Work quietly"))
     assign_item_to_playlists(db, item_id, [playlist_id])
