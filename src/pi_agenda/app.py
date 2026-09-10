@@ -67,8 +67,15 @@ def create_app(runtime_config: RuntimeConfig | None = None) -> Flask:
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=()"
         )
-        response.headers["X-Frame-Options"] = "DENY"
-        if request.path in {"/player", "/startup"}:
+        preview_media = request.endpoint == "admin.preview_media"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN" if preview_media else "DENY"
+        if preview_media:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; font-src 'self'; connect-src 'none'; "
+                "frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+            )
+        elif request.path in {"/player", "/startup"}:
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data:; media-src 'self'; connect-src 'self'; "

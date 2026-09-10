@@ -10,7 +10,7 @@ from flask import current_app, g
 
 from .config import DEFAULT_SETTINGS
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def utcnow() -> str:
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS media_items (
   source TEXT NOT NULL,
   embed_url TEXT,
   render_mode TEXT NOT NULL DEFAULT 'auto'
-    CHECK(render_mode IN ('auto','live','converted','archive','screenshot')),
+    CHECK(render_mode IN ('auto','live','converted','archive','screenshot','scroll')),
   duration_sec INTEGER NOT NULL DEFAULT 20 CHECK(duration_sec >= 0),
   slide_sec INTEGER NOT NULL DEFAULT 10 CHECK(slide_sec > 0),
   volume INTEGER NOT NULL DEFAULT 80 CHECK(volume BETWEEN 0 AND 100),
@@ -143,7 +143,7 @@ CREATE INDEX IF NOT EXISTS idx_playlist_items_order
 """
 
 
-MEDIA_ITEMS_V2 = """
+MEDIA_ITEMS_V3 = """
 CREATE TABLE media_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -152,7 +152,7 @@ CREATE TABLE media_items (
   source TEXT NOT NULL,
   embed_url TEXT,
   render_mode TEXT NOT NULL DEFAULT 'auto'
-    CHECK(render_mode IN ('auto','live','converted','archive','screenshot')),
+    CHECK(render_mode IN ('auto','live','converted','archive','screenshot','scroll')),
   duration_sec INTEGER NOT NULL DEFAULT 20 CHECK(duration_sec >= 0),
   slide_sec INTEGER NOT NULL DEFAULT 10 CHECK(slide_sec > 0),
   volume INTEGER NOT NULL DEFAULT 80 CHECK(volume BETWEEN 0 AND 100),
@@ -181,30 +181,33 @@ CREATE TABLE media_items (
 """
 
 
-def _upgrade_media_items_v2(conn: sqlite3.Connection) -> None:
+def _upgrade_media_items_v3(conn: sqlite3.Connection) -> None:
     table_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'media_items'"
     ).fetchone()[0]
-    if "announcement" in table_sql and "'native'" in table_sql:
+    if (
+        "announcement" in table_sql
+        and "'native'" in table_sql
+        and "'scroll'" in table_sql
+    ):
         return
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("PRAGMA legacy_alter_table = ON")
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("ALTER TABLE media_items RENAME TO media_items_v1")
-        conn.execute(MEDIA_ITEMS_V2)
+        conn.execute(MEDIA_ITEMS_V3)
+        old_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(media_items_v1)")
+        }
+        new_columns = [
+            row["name"] for row in conn.execute("PRAGMA table_info(media_items)")
+        ]
+        copied_columns = [name for name in new_columns if name in old_columns]
+        column_list = ", ".join(copied_columns)
         conn.execute(
-            """INSERT INTO media_items(
-                 id, name, type, source, embed_url, render_mode, duration_sec,
-                 slide_sec, volume, fit_mode, days_mask, start_time, end_time,
-                 enabled, sort_order, active_generation_id, last_checked,
-                 last_good_at, last_status, last_error, deleted_at, created_at,
-                 updated_at)
-               SELECT id, name, type, source, embed_url, render_mode, duration_sec,
-                 slide_sec, volume, fit_mode, days_mask, start_time, end_time,
-                 enabled, sort_order, active_generation_id, last_checked,
-                 last_good_at, last_status, last_error, deleted_at, created_at,
-                 updated_at FROM media_items_v1"""
+            f"INSERT INTO media_items({column_list}) "
+            f"SELECT {column_list} FROM media_items_v1"  # nosec B608
         )
         conn.execute("DROP TABLE media_items_v1")
         conn.commit()
@@ -235,7 +238,7 @@ def migrate(path: str | Path) -> None:
     conn = connect(path)
     try:
         conn.executescript(SCHEMA)
-        _upgrade_media_items_v2(conn)
+        _upgrade_media_items_v3(conn)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(media_items)")}
         if "deleted_at" not in columns:
             conn.execute("ALTER TABLE media_items ADD COLUMN deleted_at TEXT")

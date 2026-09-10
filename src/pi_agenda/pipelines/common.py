@@ -26,6 +26,7 @@ def run_command(
     timeout: int,
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
+    merge_stderr: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     executable = shutil.which(arguments[0])
     if not executable:
@@ -41,14 +42,14 @@ def run_command(
             env=merged_env,
             text=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
             timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise PipelineError(f"Command timed out after {timeout} seconds") from exc
     if result.returncode != 0:
-        output = (result.stdout or "").strip()[-2000:]
+        output = f"{result.stdout or ''}\n{result.stderr or ''}".strip()[-2000:]
         raise PipelineError(f"Command failed ({result.returncode}): {output}")
     return result
 
@@ -96,6 +97,38 @@ def find_chromium() -> str:
     raise PipelineError("Chromium is not installed")
 
 
+def capture_rendered_dom(url: str) -> str:
+    chromium = find_chromium()
+    last_error = None
+    for headless_mode in ("--headless=new", "--headless"):
+        try:
+            with tempfile.TemporaryDirectory(prefix="pi-agenda-chromium-") as profile:
+                result = run_command(
+                    [
+                        chromium,
+                        headless_mode,
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--disable-background-timer-throttling",
+                        "--no-first-run",
+                        f"--user-data-dir={profile}",
+                        "--dump-dom",
+                        "--timeout=30000",
+                        "--virtual-time-budget=30000",
+                        url,
+                    ],
+                    timeout=120,
+                    merge_stderr=False,
+                )
+            rendered = (result.stdout or "").strip()
+            if rendered and "<html" in rendered.lower():
+                return rendered
+            raise PipelineError("Chromium returned an empty rendered page")
+        except PipelineError as exc:
+            last_error = exc
+    raise PipelineError("Chromium could not render the page DOM") from last_error
+
+
 def capture_screenshot(url: str, output: Path, width: int, height: int) -> None:
     chromium = find_chromium()
     last_error = None
@@ -108,13 +141,16 @@ def capture_screenshot(url: str, output: Path, width: int, height: int) -> None:
                         headless_mode,
                         "--disable-dev-shm-usage",
                         "--disable-gpu",
+                        "--disable-background-timer-throttling",
+                        "--run-all-compositor-stages-before-draw",
                         "--no-first-run",
                         "--allow-file-access-from-files",
                         f"--user-data-dir={profile}",
                         f"--window-size={width},{height}",
                         f"--screenshot={output}",
                         "--hide-scrollbars",
-                        "--virtual-time-budget=5000",
+                        "--timeout=30000",
+                        "--virtual-time-budget=30000",
                         url,
                     ],
                     timeout=90,

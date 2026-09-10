@@ -6,13 +6,15 @@
   <section class="announcement-slide" style="background:{{ item.background_color }};color:{{ item.text_color }};font-size:{{ item.text_size }}px;text-align:{{ item.text_align }}">{{ item.source }}</section>
 {% elif item.type in ('url','ppt_link') and item.render_mode == 'live' %}
   <div class="frame-shell"><iframe style="width:{{ 10000 / item.web_zoom }}%;height:{{ 10000 / item.web_zoom }}%;transform:scale({{ item.web_zoom / 100 }});transform-origin:top left" src="{{ item.embed_url or item.source }}" title="{{ item.name }}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>
+{% elif item.generation_key and item.generation_kind == 'website_bundle' and item.render_mode in ('archive','scroll') %}
+  <div class="frame-shell"><iframe style="width:{{ 10000 / item.web_zoom }}%;height:{{ 10000 / item.web_zoom }}%;transform:scale({{ item.web_zoom / 100 }});transform-origin:top left" src="{{ url_for('admin.preview_media', item_id=item.id, generation_key=item.generation_key, filename='index.html', pi_agenda_scroll='1' if item.render_mode == 'scroll' else '0', duration=[item.duration_sec, 10]|max) }}" title="{{ item.name }}" sandbox="allow-scripts allow-same-origin"></iframe></div>
 {% elif item.generation_key and item.generation_kind == 'slides' %}
-  <img class="fit-{{ item.fit_mode }}" src="{{ url_for('player.media', item_id=item.id, generation_key=item.generation_key, filename='slide-0001.png') }}" alt="{{ item.name }}">
+  <img class="fit-{{ item.fit_mode }}" src="{{ url_for('admin.preview_media', item_id=item.id, generation_key=item.generation_key, filename='slide-0001.png') }}" alt="{{ item.name }}">
 {% elif item.generation_key and item.generation_kind == 'video' %}
-  <video class="fit-{{ item.fit_mode }}" src="{{ url_for('player.media', item_id=item.id, generation_key=item.generation_key, filename='content.mp4') }}" autoplay controls></video>
+  <video class="fit-{{ item.fit_mode }}" src="{{ url_for('admin.preview_media', item_id=item.id, generation_key=item.generation_key, filename='content.mp4') }}" autoplay controls></video>
 {% elif item.generation_key and item.generation_kind in ('screenshot','website_bundle') %}
-  <img class="fit-{{ item.fit_mode }}" src="{{ url_for('player.media', item_id=item.id, generation_key=item.generation_key, filename='screenshot.png') }}" alt="{{ item.name }}">
+  <img class="fit-{{ item.fit_mode }}" src="{{ url_for('admin.preview_media', item_id=item.id, generation_key=item.generation_key, filename='screenshot.png') }}" alt="{{ item.name }}">
 {% elif item.generation_key and item.generation_kind == 'image' %}
-  <img class="fit-{{ item.fit_mode }}" src="{{ url_for('player.media', item_id=item.id, generation_key=item.generation_key, filename='content') }}" alt="{{ item.name }}">
+  <img class="fit-{{ item.fit_mode }}" src="{{ url_for('admin.preview_media', item_id=item.id, generation_key=item.generation_key, filename='content') }}" alt="{{ item.name }}">
 {% else %}<section class="standby"><div class="standby-message">This item has no verified display output yet. Check its latest job or refresh it.</div></section>{% endif %}
 </main></body></html>

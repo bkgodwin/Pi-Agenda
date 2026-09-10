@@ -16,7 +16,7 @@ ITEM_TYPES = {
     "video",
     "announcement",
 }
-RENDER_MODES = {"auto", "live", "converted", "archive", "screenshot"}
+RENDER_MODES = {"auto", "live", "converted", "archive", "screenshot", "scroll"}
 FIT_MODES = {"contain", "cover", "stretch", "width", "height", "native"}
 
 

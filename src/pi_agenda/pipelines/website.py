@@ -9,7 +9,33 @@ from bs4 import BeautifulSoup
 from requests import RequestException
 
 from ..security import safe_get, validate_remote_url
-from .common import PipelineError, capture_screenshot, create_thumbnail
+from .common import (
+    PipelineError,
+    capture_rendered_dom,
+    capture_screenshot,
+    create_thumbnail,
+)
+
+SCROLL_SCRIPT = """"use strict";
+(() => {
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("pi_agenda_scroll") !== "1") return;
+  const totalMs = Math.max(10000, Math.min(86400000, Number(query.get("duration")) * 1000 || 20000));
+  const pauseMs = totalMs * 0.05;
+  const travelMs = totalMs * 0.90;
+  const startAt = performance.now() + pauseMs;
+  window.scrollTo(0, 0);
+  const step = now => {
+    if (now < startAt) return requestAnimationFrame(step);
+    const progress = Math.min(1, (now - startAt) / travelMs);
+    const eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+    const bottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    window.scrollTo(0, bottom * eased);
+    if (progress < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+})();
+"""
 
 
 def _allowed_hosts(value: str) -> set[str]:
@@ -25,13 +51,32 @@ def archive_website(
     screenshot_size: tuple[int, int],
 ) -> str:
     output.mkdir(parents=True, exist_ok=True)
-    html_bytes, final_url, _headers = safe_get(
+    html_bytes, final_url, headers = safe_get(
         url, allowlist=allowlist, max_bytes=min(max_total_bytes, 8 * 1024 * 1024)
     )
+    content_type = headers.get("content-type", "").split(";", 1)[0].lower()
+    if content_type not in {"text/html", "application/xhtml+xml"}:
+        raise PipelineError(
+            "Website URL did not return an HTML page; check that it is not an icon or image URL"
+        )
     try:
-        soup = BeautifulSoup(html_bytes, "html.parser")
+        rendered_html = capture_rendered_dom(final_url)
+    except PipelineError:
+        rendered_html = html_bytes
+    try:
+        soup = BeautifulSoup(rendered_html, "html.parser")
     except Exception as exc:
         raise PipelineError("Website HTML could not be parsed") from exc
+
+    document_base = final_url
+    base_node = soup.find("base", href=True)
+    if base_node:
+        try:
+            document_base = validate_remote_url(
+                urljoin(final_url, str(base_node["href"])), allowlist
+            )
+        except ValueError:
+            document_base = final_url
 
     for node in soup.find_all(["script", "iframe", "object", "embed", "form", "base"]):
         node.decompose()
@@ -42,6 +87,14 @@ def archive_website(
         for attribute in list(node.attrs):
             if attribute.lower().startswith("on"):
                 del node.attrs[attribute]
+    for image in soup.find_all("img"):
+        source = str(image.get("src") or "")
+        if not source or source.startswith("data:"):
+            for lazy_attribute in ("data-src", "data-lazy-src", "data-original"):
+                lazy_source = image.get(lazy_attribute)
+                if lazy_source:
+                    image["src"] = lazy_source
+                    break
 
     assets_dir = output / "assets"
     assets_dir.mkdir()
@@ -51,11 +104,11 @@ def archive_website(
         for node in soup.find_all(tag_name):
             if tag_name == "link":
                 rel = {str(value).lower() for value in node.get("rel", [])}
-                if "stylesheet" not in rel and "icon" not in rel:
+                if "stylesheet" not in rel:
                     continue
             value = node.get(attribute)
             if value:
-                asset_targets.append((node, attribute, urljoin(final_url, value)))
+                asset_targets.append((node, attribute, urljoin(document_base, value)))
 
     for node, attribute, asset_url in asset_targets[:100]:
         try:
@@ -86,7 +139,7 @@ def archive_website(
     security_meta["http-equiv"] = "Content-Security-Policy"
     security_meta["content"] = (
         "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-        "font-src 'self'; media-src 'none'; connect-src 'none'; frame-src 'none'; "
+        "script-src 'self'; font-src 'self'; media-src 'none'; connect-src 'none'; frame-src 'none'; "
         "form-action 'none'; base-uri 'none'"
     )
     if soup.head:
@@ -95,12 +148,15 @@ def archive_website(
         head = soup.new_tag("head")
         head.append(security_meta)
         soup.insert(0, head)
+    (output / "pi-agenda-scroll.js").write_text(SCROLL_SCRIPT, encoding="utf-8")
+    scroll_script = soup.new_tag("script", src="pi-agenda-scroll.js")
+    (soup.body or soup).append(scroll_script)
     (output / "index.html").write_text(str(soup), encoding="utf-8")
 
     width, height = screenshot_size
     try:
         capture_screenshot(
-            (output / "index.html").resolve().as_uri(),
+            final_url,
             output / "screenshot.png",
             width,
             height,

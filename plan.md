@@ -218,7 +218,7 @@ CREATE TABLE media_items (
   source TEXT NOT NULL,
   embed_url TEXT,
   render_mode TEXT NOT NULL DEFAULT 'auto'
-    CHECK(render_mode IN ('auto','live','converted','archive','screenshot')),
+    CHECK(render_mode IN ('auto','live','converted','archive','screenshot','scroll')),
   duration_sec INTEGER NOT NULL DEFAULT 20 CHECK(duration_sec >= 0),
   slide_sec INTEGER NOT NULL DEFAULT 10 CHECK(slide_sec > 0),
   volume INTEGER NOT NULL DEFAULT 80 CHECK(volume BETWEEN 0 AND 100),
@@ -452,16 +452,15 @@ LibreOffice conversion is not a fidelity guarantee. The management UI presents t
 - Validate dimensions and decompression limits.
 - Downscale to the configured maximum while preserving aspect ratio.
 - Preserve supported GIF animation when within limits; otherwise convert to a safe static or animated WebP representation and disclose the result.
-- Apply `contain`, `cover`, or `stretch` in the player.
+- Apply `contain`, `cover`, `width`, `height`, `native`, or `stretch` in the player.
 
 ### 9.5 Websites
 
 - Attempt live display in a restrictive iframe.
 - Record that many sites reject framing through browser security headers; preview verifies behavior before enabling an item.
-- Daily refresh may create:
-  - a bounded `wget` archive with rewritten links and validation, served only from the isolated cache origin; and
-  - a Chromium screenshot.
-- The player fallback order in `auto` mode is live, usable archive, screenshot, last verified screenshot.
+- Chromium waits for the live page to finish loading and execute rendering code before capturing a verified screenshot; capture retries preserve the previous generation.
+- Daily refresh creates a bounded, sanitized archive with rewritten assets plus a Chromium screenshot of the rendered live page.
+- `auto` uses the verified screenshot instead of risking a frame-blocked live page. `scroll` uses the complete cached document, pauses for 5% of the item duration, scrolls for 90%, and holds the bottom for 5%.
 - Login-required and highly dynamic sites are documented as live-or-screenshot sources rather than promised full offline archives.
 
 ### 9.6 Video
@@ -531,6 +530,7 @@ Status is item-specific. Internet availability is not inferred from a single Mic
 
 - Global schedule transitions first tell the player to fade to black and acknowledge readiness.
 - A privileged helper then uses the capability proven on the installed OS: detected `xrandr` output, DPMS, or the tested Raspberry Pi display-power interface.
+- The helper queries the output after every transition and reports success only when the XRandR mode is absent for off/present for on, or the firmware display-power value matches the request.
 - Output names such as `HDMI-1` or `HDMI-A-1` are discovered at install/startup and never hard-coded.
 - X11 operations receive the correct `DISPLAY` and `XAUTHORITY` for the kiosk session.
 - On wake, the output is restored, Chromium is brought forward or restarted if needed, and the playlist is reloaded.
