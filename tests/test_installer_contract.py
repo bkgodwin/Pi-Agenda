@@ -18,6 +18,12 @@ def test_repair_reinstalls_the_app_package_despite_an_unchanged_version():
     assert "--no-deps" in script
 
 
+def test_kiosk_hides_the_pointer_and_logs_its_launch():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    assert "unclutter -idle 0 -root" in script
+    assert "pi-agenda-kiosk: launching chromium" in script
+
+
 def test_scrolling_archive_is_allowed_by_the_installed_cache_csp():
     source = (
         Path(__file__).parents[1] / "src" / "pi_agenda" / "__main__.py"
