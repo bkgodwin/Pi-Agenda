@@ -8,6 +8,9 @@ from .common import PipelineError, create_thumbnail, verify_image
 
 FORMAT_SUFFIX = {
     "JPEG": ".jpg",
+    # Some phones and cameras store multiple pictures in a JPEG container.
+    # Pillow identifies those files as MPO even when they use a .jpg extension.
+    "MPO": ".jpg",
     "PNG": ".png",
     "WEBP": ".webp",
     "GIF": ".gif",
@@ -51,7 +54,11 @@ def process_image(source: Path, output: Path, *, resolution: str) -> None:
                         "RGBA" if "transparency" in image.info else "RGB"
                     )
                 save_format = (
-                    image_format if image_format in {"JPEG", "PNG", "WEBP"} else "PNG"
+                    "JPEG"
+                    if image_format == "MPO"
+                    else image_format
+                    if image_format in {"JPEG", "PNG", "WEBP"}
+                    else "PNG"
                 )
                 if destination.suffix != FORMAT_SUFFIX[save_format]:
                     destination = output / "content.png"

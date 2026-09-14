@@ -10,6 +10,7 @@ from pi_agenda.backup import restore_backup
 from pi_agenda.db import connect, get_setting, set_setting
 from pi_agenda.generations import cleanup_staging
 from pi_agenda.jobs import claim_job, finish_job
+from pi_agenda.pipelines.image import process_image
 from pi_agenda.worker import process_item_job
 
 
@@ -131,6 +132,24 @@ def test_jfif_image_upload_is_accepted(authenticated_client, runtime):
         ).is_file()
     finally:
         conn.close()
+
+
+def test_jpg_identified_as_mpo_is_normalized_to_jpeg(tmp_path):
+    source = tmp_path / "phone-photo.jpg"
+    primary = Image.new("RGB", (320, 180), (25, 120, 90))
+    secondary = Image.new("RGB", (320, 180), (90, 25, 120))
+    primary.save(source, format="MPO", save_all=True, append_images=[secondary])
+    output = tmp_path / "output"
+
+    with Image.open(source) as image:
+        assert image.format == "MPO"
+
+    process_image(source, output, resolution="1080p")
+
+    content = output / "content.jpg"
+    assert content.is_file()
+    with Image.open(content) as image:
+        assert image.format == "JPEG"
 
 
 def test_bmp_image_upload_is_normalized_to_png(authenticated_client, runtime):
