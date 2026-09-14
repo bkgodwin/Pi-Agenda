@@ -20,6 +20,12 @@ def staging_directory(data_dir: Path, job_id: int) -> Path:
     return path
 
 
+def temporary_directory(data_dir: Path, prefix: str):
+    staging = data_dir / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=staging)
+
+
 def run_command(
     arguments: list[str],
     *,
@@ -97,12 +103,17 @@ def find_chromium() -> str:
     raise PipelineError("Chromium is not installed")
 
 
-def capture_rendered_dom(url: str) -> str:
+def capture_rendered_dom(url: str, *, data_dir: Path | None = None) -> str:
     chromium = find_chromium()
     last_error = None
     for headless_mode in ("--headless=new", "--headless"):
         try:
-            with tempfile.TemporaryDirectory(prefix="pi-agenda-chromium-") as profile:
+            temp_context = (
+                temporary_directory(data_dir, "pi-agenda-chromium-")
+                if data_dir is not None
+                else tempfile.TemporaryDirectory(prefix="pi-agenda-chromium-")
+            )
+            with temp_context as profile:
                 result = run_command(
                     [
                         chromium,
@@ -129,12 +140,19 @@ def capture_rendered_dom(url: str) -> str:
     raise PipelineError("Chromium could not render the page DOM") from last_error
 
 
-def capture_screenshot(url: str, output: Path, width: int, height: int) -> None:
+def capture_screenshot(
+    url: str, output: Path, width: int, height: int, *, data_dir: Path | None = None
+) -> None:
     chromium = find_chromium()
     last_error = None
     for headless_mode in ("--headless=new", "--headless"):
         try:
-            with tempfile.TemporaryDirectory(prefix="pi-agenda-chromium-") as profile:
+            temp_context = (
+                temporary_directory(data_dir, "pi-agenda-chromium-")
+                if data_dir is not None
+                else tempfile.TemporaryDirectory(prefix="pi-agenda-chromium-")
+            )
+            with temp_context as profile:
                 run_command(
                     [
                         chromium,

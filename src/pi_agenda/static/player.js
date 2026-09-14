@@ -9,7 +9,7 @@
   const progressWidget = document.getElementById("progress-widget");
   const exitToken = document.querySelector('meta[name="kiosk-exit-token"]')?.content || "";
   let playlist = [];
-  let playlistSelection = null;
+  let playlistSignature = null;
   let etag = null;
   let index = 0;
   let currentTimer = null;
@@ -41,18 +41,24 @@
     const progressVisible = displayOn && widgetConfig.progress.enabled && Boolean(progressWindow);
     widgetLayer.classList.toggle("hidden", !clockVisible && !tickerVisible && !progressVisible);
 
-    clockWidget.className = `screen-clock position-${widgetConfig.clock.position}${clockVisible ? "" : " hidden"}`;
-    clockWidget.style.fontSize = `${widgetConfig.clock.size}px`;
-    updateClockWidget();
+    if (clockWidget) {
+      clockWidget.className = `screen-clock position-${widgetConfig.clock.position}${clockVisible ? "" : " hidden"}`;
+      clockWidget.style.fontSize = `${widgetConfig.clock.size}px`;
+      updateClockWidget();
+    }
 
-    tickerWidget.className = `screen-ticker position-${widgetConfig.ticker.position}${tickerVisible ? "" : " hidden"}`;
-    const tickerText = tickerWidget.querySelector("span");
-    if (tickerText.textContent !== widgetConfig.ticker.text) tickerText.textContent = widgetConfig.ticker.text;
-    tickerText.style.animationDuration = `${widgetConfig.ticker.speed}s`;
+    if (tickerWidget) {
+      tickerWidget.className = `screen-ticker position-${widgetConfig.ticker.position}${tickerVisible ? "" : " hidden"}`;
+      const tickerText = tickerWidget.querySelector("span");
+      if (tickerText && tickerText.textContent !== widgetConfig.ticker.text) tickerText.textContent = widgetConfig.ticker.text;
+      if (tickerText) tickerText.style.animationDuration = `${widgetConfig.ticker.speed}s`;
+    }
 
-    progressWidget.className = `screen-progress position-${widgetConfig.progress.position}${progressVisible ? "" : " hidden"}`;
-    progressWidget.style.height = `${widgetConfig.progress.height}px`;
-    progressWidget.querySelector("span").style.backgroundColor = widgetConfig.progress.color;
+    if (progressWidget) {
+      progressWidget.className = `screen-progress position-${widgetConfig.progress.position}${progressVisible ? "" : " hidden"}`;
+      progressWidget.style.height = `${widgetConfig.progress.height}px`;
+      progressWidget.querySelector("span").style.backgroundColor = widgetConfig.progress.color;
+    }
 
     const topProgress = progressVisible && widgetConfig.progress.position === "top" ? widgetConfig.progress.height : 0;
     const bottomProgress = progressVisible && widgetConfig.progress.position === "bottom" ? widgetConfig.progress.height : 0;
@@ -62,13 +68,22 @@
     widgetLayer.style.setProperty("--bottom-progress", `${bottomProgress}px`);
     widgetLayer.style.setProperty("--top-bands", `${topProgress + topTicker}px`);
     widgetLayer.style.setProperty("--bottom-bands", `${bottomProgress + bottomTicker}px`);
-    statusDot.style.bottom = `${bottomProgress + bottomTicker + 10}px`;
+    if (statusDot) statusDot.style.bottom = `${bottomProgress + bottomTicker + 10}px`;
     updateProgressWidget();
   }
 
   function setStatus(level, title) {
+    if (!statusDot) return;
     statusDot.className = `connection-status ${level}`;
     statusDot.title = title;
+  }
+
+  function playbackSignature(data) {
+    return JSON.stringify({
+      display_on: data.display_on,
+      active_playlists: (data.active_playlists || []).map(playlist => playlist.id),
+      items: data.items || [],
+    });
   }
 
   function clearStage() {
@@ -214,9 +229,10 @@
       displayOn = data.display_on;
       widgetConfig = data.widgets;
       progressWindow = data.progress_window;
-      const selectionChanged = data.selection_key !== playlistSelection;
+      const nextPlaylistSignature = playbackSignature(data);
+      const selectionChanged = nextPlaylistSignature !== playlistSignature;
       if (selectionChanged) {
-        playlistSelection = data.selection_key;
+        playlistSignature = nextPlaylistSignature;
         playlist = data.items;
         index = 0;
         // A selection-key change means a schedule boundary or an administrative

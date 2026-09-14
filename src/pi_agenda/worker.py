@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from .config import RuntimeConfig
 from .db import connect, get_setting, migrate, set_setting, utcnow
-from .generations import cleanup_retired, publish_generation
+from .generations import cleanup_retired, cleanup_staging, publish_generation
 from .jobs import (
     claim_job,
     enqueue_job,
@@ -33,6 +33,7 @@ from .security import validate_remote_url
 LOG = logging.getLogger("pi_agenda.worker")
 STOP = False
 WORKER_STARTED = time.monotonic()
+POWER_REASSERT_SECONDS = 300
 
 
 def _stop(_signum, _frame) -> None:
@@ -193,7 +194,22 @@ def _apply_power_state(conn) -> None:
     current = get_setting(conn, "display_power_state", "unknown")
     desired_name = "on" if desired else "off"
     set_setting(conn, "display_desired_state", desired_name)
-    if current == desired_name:
+    now_utc = datetime.now(UTC)
+    should_reassert_on = False
+    if desired_name == "on" and current == "on":
+        last_applied_text = get_setting(conn, "display_power_applied_at", "")
+        player_state = get_setting(conn, "player_visual_state", "")
+        should_reassert_on = player_state == "black"
+        try:
+            last_applied = datetime.fromisoformat(last_applied_text)
+            if last_applied.tzinfo is None:
+                last_applied = last_applied.replace(tzinfo=UTC)
+            should_reassert_on = should_reassert_on or (
+                now_utc - last_applied > timedelta(seconds=POWER_REASSERT_SECONDS)
+            )
+        except ValueError:
+            should_reassert_on = True
+    if current == desired_name and not should_reassert_on:
         set_setting(conn, "display_power_pending_at", "")
         return
     if (
@@ -208,7 +224,7 @@ def _apply_power_state(conn) -> None:
             pending_at = datetime.fromisoformat(pending_text)
             if pending_at.tzinfo is None:
                 pending_at = pending_at.replace(tzinfo=UTC)
-            if datetime.now(UTC) - pending_at < timedelta(seconds=20):
+            if now_utc - pending_at < timedelta(seconds=20):
                 return
         except ValueError:
             set_setting(conn, "display_power_pending_at", utcnow())
@@ -222,6 +238,7 @@ def _apply_power_state(conn) -> None:
             LOG.warning("display helper failed with exit code %s", result.returncode)
             return
     set_setting(conn, "display_power_state", desired_name)
+    set_setting(conn, "display_power_applied_at", utcnow())
     set_setting(conn, "display_power_pending_at", "")
 
 
@@ -265,6 +282,7 @@ def run_worker(config: RuntimeConfig) -> None:
     migrate(config.db_path)
     conn = connect(config.db_path)
     recover_interrupted_jobs(conn)
+    cleanup_staging(config.data_dir)
     # This value describes real hardware and cannot be trusted across an X
     # session restart or reboot. Reapply and verify the desired state.
     set_setting(conn, "display_power_state", "unknown")

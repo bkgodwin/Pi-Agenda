@@ -43,3 +43,9 @@ def test_scrolling_archive_is_allowed_by_the_installed_cache_csp():
         Path(__file__).parents[1] / "src" / "pi_agenda" / "__main__.py"
     ).read_text(encoding="utf-8")
     assert "script-src 'self'" in source
+
+
+def test_waitress_upload_buffers_use_managed_staging_tmpdir():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    assert '"$DATA_DIR/staging/tmp"' in script
+    assert "TMPDIR=$DATA_DIR/staging/tmp" in script

@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .db import bump_playlist_version, transaction, utcnow
 
+STALE_STAGING_PREFIXES = ("pi-agenda-chromium-", "restore-", "pi-agenda-backup-")
+
 
 def directory_hash(path: Path) -> str:
     digest = hashlib.sha256()
@@ -117,4 +119,31 @@ def cleanup_retired(conn: sqlite3.Connection, data_dir: Path) -> int:
             shutil.rmtree(path, ignore_errors=True)
         conn.execute("DELETE FROM media_generations WHERE id = ?", (row["id"],))
         removed += 1
-    return removed + len(deleted_items)
+    return removed + len(deleted_items) + cleanup_staging(data_dir)
+
+
+def cleanup_staging(data_dir: Path, *, older_than_hours: int = 6) -> int:
+    staging = data_dir / "staging"
+    if not staging.exists():
+        return 0
+    cutoff = datetime.now(UTC).timestamp() - older_than_hours * 3600
+    removed = 0
+    for path in staging.iterdir():
+        if not path.exists():
+            continue
+        name = path.name
+        is_job_staging = "-" in name and name.split("-", 1)[0].isdigit()
+        is_temp_staging = name.startswith(STALE_STAGING_PREFIXES)
+        if not is_job_staging and not is_temp_staging:
+            continue
+        try:
+            if path.stat().st_mtime > cutoff:
+                continue
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            continue
+    return removed

@@ -117,7 +117,7 @@ if [[ "$MODE" != "reset-password" ]]; then
   install -d -o root -g root -m 0755 "$INSTALL_DIR"
   install -d -o "$APP_USER" -g "$APP_GROUP" -m 0750 \
     "$DATA_DIR" "$DATA_DIR/secrets" "$DATA_DIR/uploads" "$DATA_DIR/generations" \
-    "$DATA_DIR/thumbs" "$DATA_DIR/staging" "$DATA_DIR/backups"
+    "$DATA_DIR/thumbs" "$DATA_DIR/staging" "$DATA_DIR/staging/tmp" "$DATA_DIR/backups"
 
   if [[ "$SCRIPT_DIR" != "$INSTALL_DIR" ]]; then
     info "Installing application files…"
@@ -163,6 +163,7 @@ PI_AGENDA_PLAYER_TOKEN=$PLAYER_TOKEN
 PI_AGENDA_WEB_THREADS=4
 PI_AGENDA_LOG_LEVEL=INFO
 PI_AGENDA_VERSION_COMMIT=$SOURCE_COMMIT
+TMPDIR=$DATA_DIR/staging/tmp
 EOF
 
   set -a
