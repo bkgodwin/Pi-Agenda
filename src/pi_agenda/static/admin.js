@@ -411,8 +411,8 @@
           button.textContent = "Check for and install update";
           notify("Pi-Agenda is already up to date");
         } else {
-          button.textContent = "Update scheduled — Pi will reboot";
-          notify("Update scheduled. The Pi will reboot when installation finishes.");
+          button.textContent = "Installing update…";
+          notify("Update started. This can take several minutes; the Pi will reboot when installation finishes.");
         }
       })
       .catch(error => { button.disabled = false; button.textContent = "Check for and install update"; notify(error.message, true); });
