@@ -28,11 +28,15 @@ def test_website_archive_removes_active_content(tmp_path, monkeypatch):
 
     monkeypatch.setattr(website, "safe_get", fake_get)
     monkeypatch.setattr(website, "validate_remote_url", lambda url, _allowlist: url)
-    monkeypatch.setattr(website, "capture_rendered_dom", lambda _url: html.decode())
-    captured = []
     monkeypatch.setattr(
-        website, "capture_screenshot", lambda url, *_args: captured.append(url)
+        website, "capture_rendered_dom", lambda _url, **_kwargs: html.decode()
     )
+    captured = []
+
+    def fake_screenshot(url, *_args, **_kwargs):
+        captured.append(url)
+
+    monkeypatch.setattr(website, "capture_screenshot", fake_screenshot)
     output = tmp_path / "archive"
     website.archive_website(
         "https://example.test/",
