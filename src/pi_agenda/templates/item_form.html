@@ -11,7 +11,7 @@
       {% endfor %}
     </select>
   </label>
-  {% if not item %}<label class="span-2 source-group" id="file-field">Choose file<input type="file" name="file" accept=".pptx,.pdf,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.mkv,.webm"></label>{% endif %}
+  {% if not item %}<label class="span-2 source-group" id="file-field">Choose file<input type="file" name="file" accept=".pptx,.pdf,.jpg,.jpeg,.jfif,.pjpeg,.pjp,.png,.webp,.gif,.bmp,.tif,.tiff,.mp4,.mov,.mkv,.webm"></label>{% endif %}
   <label class="span-2 source-group {% if not item or item.type not in ('url','ppt_link') %}hidden{% endif %}" id="source-field">URL or Microsoft embed code<textarea name="source" rows="4" placeholder="https://…">{{ item.source if item and item.type in ('url','ppt_link') else '' }}</textarea></label>
   <label class="span-2 source-group {% if not item or item.type != 'announcement' %}hidden{% endif %}" id="announcement-field">Announcement message<textarea name="announcement_text" rows="5" maxlength="2000" placeholder="School picture day is Friday">{{ item.source if item and item.type == 'announcement' else '' }}</textarea></label>
   <label id="render-mode-field">Render mode<select name="render_mode">
@@ -47,7 +47,7 @@
 {% if item and item.type in ('ppt_file','pdf_deck','image','video') %}
 <form id="replace-form" class="panel form-grid" data-item-id="{{ item.id }}" enctype="multipart/form-data">
   <div class="span-2"><h2>Replace source file</h2><p>The current verified version remains active until the replacement finishes processing.</p></div>
-  <label class="span-2">Replacement file<input type="file" name="file" required></label>
+  <label class="span-2">Replacement file<input type="file" name="file" required accept="{% if item.type == 'ppt_file' %}.pptx{% elif item.type == 'pdf_deck' %}.pdf{% elif item.type == 'image' %}.jpg,.jpeg,.jfif,.pjpeg,.pjp,.png,.webp,.gif,.bmp,.tif,.tiff{% elif item.type == 'video' %}.mp4,.mov,.mkv,.webm{% endif %}"></label>
   <div class="span-2 form-actions"><button class="primary" type="submit">Upload replacement</button></div>
   <div class="span-2 progress hidden"><span></span><output>0%</output></div>
 </form>

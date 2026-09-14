@@ -117,7 +117,7 @@ Sign in to the management site, select **Add content**, and choose one of:
 - PowerPoint `.pptx`
 - PDF `.pdf`
 - Microsoft 365 PowerPoint embed/share link
-- JPG, PNG, WebP, or GIF image
+- JPG/JPEG/JFIF, PNG, WebP, GIF, BMP, or TIFF image
 - Website URL
 - MP4, MOV, MKV, or WebM video
 - Text announcement with background color, text color, size, and alignment
@@ -177,6 +177,7 @@ The update control is installed by the current `start.sh`. An older installation
 
 ```bash
 sudo journalctl -u 'pi-agenda-update-*' --no-pager -n 150
+sudo journalctl -t pi-agenda-update -t pi-agenda-update-runner --no-pager -n 150
 ```
 
 ## Backups

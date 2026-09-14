@@ -308,31 +308,52 @@ EXIT_HELPER
 #!/usr/bin/env bash
 set -Eeuo pipefail
 repo="https://github.com/bkgodwin/Pi-Agenda.git"
+log() {
+  printf 'pi-agenda-update: %s\n' "$*" >&2
+  command -v logger >/dev/null 2>&1 && logger -t pi-agenda-update -- "$*" || true
+}
 [[ "$#" -ge 1 ]] || exit 64
+log "checking latest main commit"
 latest="$(git ls-remote --exit-code "$repo" refs/heads/main | awk '{print $1}')"
 [[ "$latest" =~ ^[0-9a-f]{40}$ ]] || { echo "Could not identify the latest main commit" >&2; exit 69; }
 current="$(sed -n 's/^PI_AGENDA_VERSION_COMMIT=//p' /etc/pi-agenda.env | head -n 1)"
 if [[ "$1" == "check" && "$#" -eq 1 ]]; then
+  log "check result current=${current:-unknown} latest=$latest"
   printf 'current=%s\nlatest=%s\n' "${current:-unknown}" "$latest"
   exit 0
 fi
 [[ "$1" == "update" && "$#" -eq 2 && "$2" =~ ^[0-9a-f]{40}$ && "$2" == "$latest" ]] || exit 64
-unit="pi-agenda-update-$(date +%s)"
-exec systemd-run --quiet --collect --unit="$unit" /usr/local/libexec/pi-agenda-update-runner "$latest"
+unit="pi-agenda-update-$(date +%s)-$$"
+log "scheduling update unit=$unit target=$latest current=${current:-unknown}"
+systemd-run --collect --unit="$unit" /usr/local/libexec/pi-agenda-update-runner "$latest"
+log "scheduled update unit=$unit"
 UPDATE_HELPER
   chmod 0755 /usr/local/libexec/pi-agenda-update
 
   cat >/usr/local/libexec/pi-agenda-update-runner <<'UPDATE_RUNNER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+log() {
+  printf 'pi-agenda-update-runner: %s\n' "$*" >&2
+  command -v logger >/dev/null 2>&1 && logger -t pi-agenda-update-runner -- "$*" || true
+}
 [[ "$#" -eq 1 && "$1" =~ ^[0-9a-f]{40}$ ]] || exit 64
 target="$1"
+trap 'code=$?; log "failed target=$target exit=$code line=$LINENO"; exit "$code"' ERR
 update_dir="$(mktemp -d /var/lib/pi-agenda/staging/update-XXXXXXXX)"
-cleanup() { rm -rf -- "$update_dir"; }
+cleanup() {
+  log "cleaning up $update_dir"
+  rm -rf -- "$update_dir"
+}
 trap cleanup EXIT
+log "starting update target=$target"
+log "cloning main into $update_dir/repo"
 git clone --quiet --depth=1 --branch=main https://github.com/bkgodwin/Pi-Agenda.git "$update_dir/repo"
-[[ "$(git -C "$update_dir/repo" rev-parse HEAD)" == "$target" ]] || { echo "Main changed during update; retry from Settings" >&2; exit 75; }
+actual="$(git -C "$update_dir/repo" rev-parse HEAD)"
+[[ "$actual" == "$target" ]] || { log "main changed during update target=$target actual=$actual"; echo "Main changed during update; retry from Settings" >&2; exit 75; }
+log "running repair from cloned update"
 "$update_dir/repo/start.sh" --repair
+log "repair finished; rebooting"
 systemctl reboot
 UPDATE_RUNNER
   chmod 0755 /usr/local/libexec/pi-agenda-update-runner

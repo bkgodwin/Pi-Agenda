@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import uuid
 import zipfile
@@ -43,6 +45,21 @@ from .schedules import parse_hhmm, validate_window
 from .security import api_login_required, validate_csrf, validate_remote_url
 
 bp = Blueprint("api", __name__, url_prefix="/api")
+logger = logging.getLogger(__name__)
+
+IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".jfif",
+    ".pjpeg",
+    ".pjp",
+    ".png",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+}
 
 
 def ok(data=None, status=200):
@@ -148,11 +165,7 @@ def _create_upload() -> tuple[dict, object]:
     type_by_extension = {
         ".pptx": "ppt_file",
         ".pdf": "pdf_deck",
-        ".jpg": "image",
-        ".jpeg": "image",
-        ".png": "image",
-        ".webp": "image",
-        ".gif": "image",
+        **dict.fromkeys(IMAGE_EXTENSIONS, "image"),
         ".mp4": "video",
         ".mov": "video",
         ".mkv": "video",
@@ -421,7 +434,7 @@ def replace_item(item_id: int):
     allowed = {
         "ppt_file": {".pptx"},
         "pdf_deck": {".pdf"},
-        "image": {".jpg", ".jpeg", ".png", ".webp", ".gif"},
+        "image": IMAGE_EXTENSIONS,
         "video": {".mp4", ".mov", ".mkv", ".webm"},
     }
     suffix = Path(uploaded.filename).suffix.lower()
@@ -1285,8 +1298,6 @@ def reboot():
     helper = Path("/usr/local/libexec/pi-agenda-reboot")
     if not helper.is_file():
         return error("unavailable", "Reboot helper is not installed", 503)
-    import subprocess
-
     result = subprocess.run(["/usr/bin/sudo", str(helper)], timeout=10, check=False)
     return (
         ok({"requested": True}, 202)
@@ -1306,8 +1317,7 @@ def update_system():
             "Update helper is not installed. Run sudo ./start.sh --repair once over SSH.",
             503,
         )
-    import subprocess
-
+    logger.info("update request received")
     try:
         check = subprocess.run(
             ["/usr/bin/sudo", str(helper), "check"],
@@ -1317,8 +1327,15 @@ def update_system():
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
+        logger.exception("update check command failed to run")
         return error("update_check_failed", "Could not contact GitHub for updates", 503)
     if check.returncode != 0:
+        logger.warning(
+            "update check failed: returncode=%s stderr=%r stdout=%r",
+            check.returncode,
+            check.stderr[-1000:],
+            check.stdout[-1000:],
+        )
         return error(
             "update_check_failed",
             (check.stderr.strip() or "Could not contact GitHub for updates")[-500:],
@@ -1331,21 +1348,41 @@ def update_system():
             versions[key] = value.strip()
     latest = versions.get("latest", "")
     current = versions.get("current", "unknown")
+    logger.info("update check returned current=%s latest=%s", current, latest)
     if len(latest) != 40 or any(
         character not in "0123456789abcdef" for character in latest
     ):
+        logger.warning("update check returned invalid latest value: %r", latest)
         return error(
             "update_check_failed", "Update service returned an invalid version", 503
         )
     if current == latest:
+        logger.info("update request finished: already current at %s", current)
         return ok({"up_to_date": True, "version": current})
     scheduled = subprocess.run(
         ["/usr/bin/sudo", str(helper), "update", latest],
+        text=True,
+        capture_output=True,
         timeout=15,
         check=False,
     )
     if scheduled.returncode != 0:
-        return error("update_failed", "The update could not be scheduled", 500)
+        logger.warning(
+            "update schedule failed: returncode=%s target=%s stderr=%r stdout=%r",
+            scheduled.returncode,
+            latest,
+            scheduled.stderr[-1000:],
+            scheduled.stdout[-1000:],
+        )
+        message = scheduled.stderr.strip() or "The update could not be scheduled"
+        return error("update_failed", message[-500:], 500)
+    logger.info(
+        "update scheduled successfully: from=%s to=%s stdout=%r stderr=%r",
+        current,
+        latest,
+        scheduled.stdout[-1000:],
+        scheduled.stderr[-1000:],
+    )
     return ok(
         {"up_to_date": False, "scheduled": True, "from": current, "to": latest},
         202,
