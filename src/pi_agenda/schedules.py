@@ -83,9 +83,12 @@ def display_should_be_on(conn, now_utc: datetime, timezone_name: str) -> bool:
 
     if get_setting(conn, "schedule_paused", "0") == "1":
         forced_playlist_id = get_setting(conn, "forced_playlist_id", "")
-        if forced_playlist_id.isdigit() and conn.execute(
-            "SELECT 1 FROM playlists WHERE id = ?", (int(forced_playlist_id),)
-        ).fetchone():
+        if (
+            forced_playlist_id.isdigit()
+            and conn.execute(
+                "SELECT 1 FROM playlists WHERE id = ?", (int(forced_playlist_id),)
+            ).fetchone()
+        ):
             return True
 
     # A paused schedule freezes playlist *selection* (see playlist.py) but the
