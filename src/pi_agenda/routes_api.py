@@ -171,11 +171,42 @@ def _check_storage(required_bytes: int = 0) -> None:
     config = current_app.config["RUNTIME_CONFIG"]
     conn = get_db()
     usage = shutil.disk_usage(config.data_dir)
+    quota = int(get_setting(conn, "content_quota_bytes", str(20 * 1024 * 1024 * 1024)))
     reserve = int(get_setting(conn, "minimum_free_bytes", str(1024 * 1024 * 1024)))
+    managed_usage = _managed_content_bytes(config.data_dir)
+    if managed_usage + required_bytes > quota:
+        raise ValueError(
+            "Content storage quota would be exceeded. Delete old content or raise "
+            "the quota in Settings."
+        )
     if usage.free - required_bytes < reserve:
         raise ValueError(
             "Not enough free disk space to preserve the configured reserve"
         )
+
+
+def _managed_content_bytes(data_dir: Path) -> int:
+    total = 0
+    for root in ("uploads", "generations"):
+        directory = data_dir / root
+        if not directory.exists():
+            continue
+        for path in directory.rglob("*"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _is_no_space_error(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, OSError) and getattr(current, "errno", None) == 28:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 @bp.post("/items")
@@ -203,9 +234,14 @@ def add_item():
                 if target.stat().st_size == 0:
                     raise ValueError("Uploaded file is empty")
                 update_item(conn, item_id, {"source": relative.as_posix()})
-            except Exception:
+            except Exception as exc:
                 conn.execute("DELETE FROM media_items WHERE id = ?", (item_id,))
                 shutil.rmtree(target.parent, ignore_errors=True)
+                if _is_no_space_error(exc):
+                    raise ValueError(
+                        "The Pi is out of storage while saving the upload. Delete "
+                        "content or lower the quota reserve, then try again."
+                    ) from exc
                 raise
             job_id = enqueue_job(conn, "convert", item_id)
         else:
@@ -249,6 +285,15 @@ def add_item():
                 job_id = enqueue_job(conn, "refresh", item_id)
         assign_item_to_playlists(conn, item_id, assignment_ids)
         return ok({"id": item_id, "job_id": job_id}, 201)
+    except OSError as exc:
+        if _is_no_space_error(exc):
+            return error(
+                "storage_full",
+                "The Pi is out of storage while receiving the upload. Delete "
+                "content or lower the quota reserve, then try again.",
+                507,
+            )
+        raise
     except ValueError as exc:
         return error("invalid_item", str(exc))
 
@@ -389,10 +434,19 @@ def replace_item(item_id: int):
         )
         target = current_app.config["RUNTIME_CONFIG"].data_dir / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        uploaded.save(target)
-        if target.stat().st_size == 0:
+        try:
+            uploaded.save(target)
+            if target.stat().st_size == 0:
+                target.unlink(missing_ok=True)
+                raise ValueError("Uploaded file is empty")
+        except Exception as exc:
             target.unlink(missing_ok=True)
-            raise ValueError("Uploaded file is empty")
+            if _is_no_space_error(exc):
+                raise ValueError(
+                    "The Pi is out of storage while saving the replacement upload. "
+                    "Delete content or lower the quota reserve, then try again."
+                ) from exc
+            raise
         update_item(conn, item_id, {"source": relative.as_posix()})
         return ok({"job_id": enqueue_job(conn, "convert", item_id)}, 202)
     except ValueError as exc:
@@ -812,6 +866,7 @@ def force_play_playlist():
     if not row:
         return error("not_found", "Playlist not found", 404)
     set_setting(conn, "forced_playlist_id", str(playlist_id))
+    _invalidate_display_power(conn)
     bump_playlist_version(conn)
     return ok({"forced_playlist_id": playlist_id})
 
@@ -1084,7 +1139,12 @@ def refresh_all():
 def backup():
     config = current_app.config["RUNTIME_CONFIG"]
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    temp_dir = Path(tempfile.mkdtemp(prefix="pi-agenda-backup-"))
+    temp_dir = Path(
+        tempfile.mkdtemp(
+            prefix="pi-agenda-backup-",
+            dir=current_app.config["RUNTIME_CONFIG"].data_dir / "staging",
+        )
+    )
     try:
         snapshot = temp_dir / "db.sqlite"
         backup_database(config.db_path, snapshot)

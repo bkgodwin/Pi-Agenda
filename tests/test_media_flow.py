@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 
 from PIL import Image
 
 from pi_agenda.backup import restore_backup
 from pi_agenda.db import connect, get_setting, set_setting
+from pi_agenda.generations import cleanup_staging
 from pi_agenda.jobs import claim_job, finish_job
 from pi_agenda.worker import process_item_job
 
@@ -120,3 +122,55 @@ def test_soft_delete_preserves_generation_during_grace(authenticated_client, run
         item["id"] != item_id
         for item in authenticated_client.get("/api/items").get_json()["data"]
     )
+
+
+def test_upload_refuses_when_content_quota_would_be_exceeded(
+    authenticated_client, runtime
+):
+    conn = connect(runtime.db_path)
+    try:
+        set_setting(conn, "content_quota_bytes", "1")
+    finally:
+        conn.close()
+
+    response = authenticated_client.post(
+        "/api/items",
+        data={"name": "Too big", "type": "image", "file": (png_upload(), "photo.png")},
+        headers={"X-CSRF-Token": "test-csrf"},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    assert "quota" in response.get_json()["error"]["message"].lower()
+    conn = connect(runtime.db_path)
+    try:
+        assert (
+            conn.execute("SELECT COUNT(*) count FROM media_items").fetchone()["count"]
+            == 0
+        )
+    finally:
+        conn.close()
+
+
+def test_cleanup_staging_removes_old_job_and_chromium_temp_dirs(runtime):
+    runtime.ensure_directories()
+    old_job = runtime.data_dir / "staging" / "123-deadbeef"
+    old_chromium = runtime.data_dir / "staging" / "pi-agenda-chromium-old"
+    keep = runtime.data_dir / "staging" / "restore-upload.zip"
+    for path in (old_job, old_chromium):
+        path.mkdir(parents=True)
+        (path / "temp.txt").write_text("stale", encoding="utf-8")
+    keep.write_text("pending restore", encoding="utf-8")
+    old_time = 1_700_000_000
+    for path in (old_job, old_chromium):
+        path.touch()
+        (path / "temp.txt").touch()
+        os.utime(path, (old_time, old_time))
+        os.utime(path / "temp.txt", (old_time, old_time))
+
+    removed = cleanup_staging(runtime.data_dir, older_than_hours=1)
+
+    assert removed == 2
+    assert not old_job.exists()
+    assert not old_chromium.exists()
+    assert keep.exists()

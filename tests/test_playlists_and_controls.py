@@ -124,6 +124,53 @@ def test_paused_selection_stays_pinned_while_display_blanks_outside_window(db):
     assert outside["display_off_reason"] == "schedule"
 
 
+def test_forced_playlist_plays_outside_playlist_and_item_windows(db):
+    set_setting(db, "timezone", "UTC")
+    db.execute("UPDATE display_schedule SET mode='off', on_time=NULL, off_time=NULL")
+    playlist_id = create_playlist(
+        db,
+        {"name": "Morning", "days_mask": 1, "start_time": "09:00", "end_time": "10:00"},
+    )
+    item_id = create_item(
+        db,
+        _announcement(
+            "Morning note",
+            "Good morning",
+            days_mask=1,
+            start_time="09:00",
+            end_time="10:00",
+        ),
+    )
+    assign_item_to_playlists(db, item_id, [playlist_id])
+    set_setting(db, "schedule_paused", "1")
+    set_setting(db, "forced_playlist_id", str(playlist_id))
+
+    result = build_playlist(
+        db, cache_port=8002, now_utc=datetime(2026, 9, 7, 11, 0, tzinfo=UTC)
+    )
+
+    assert result["display_on"] is True
+    assert result["forced_playlist"] is True
+    assert result["display_off_reason"] is None
+    assert [value["name"] for value in result["active_playlists"]] == ["Morning"]
+    assert [value["name"] for value in result["items"]] == ["Morning note"]
+
+
+def test_force_play_invalidates_stale_display_power(authenticated_client, db):
+    playlist_id = create_playlist(db, {"name": "Force me"})
+    set_setting(db, "schedule_paused", "1")
+    set_setting(db, "display_power_state", "off")
+
+    response = authenticated_client.post(
+        "/api/display/force-play",
+        json={"playlist_id": playlist_id},
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert get_setting(db, "display_power_state") == "unknown"
+
+
 def test_announcement_api_and_playlist_management(authenticated_client, db):
     default_id = db.execute("SELECT id FROM playlists WHERE is_default = 1").fetchone()[
         "id"

@@ -60,7 +60,7 @@ def archive_website(
             "Website URL did not return an HTML page; check that it is not an icon or image URL"
         )
     try:
-        rendered_html = capture_rendered_dom(final_url)
+        rendered_html = capture_rendered_dom(final_url, data_dir=output.parent.parent)
     except PipelineError:
         rendered_html = html_bytes
     try:
@@ -160,6 +160,7 @@ def archive_website(
             output / "screenshot.png",
             width,
             height,
+            data_dir=output.parent.parent,
         )
         create_thumbnail(output / "screenshot.png", output / "thumbnail.jpg")
     except (OSError, PipelineError):
@@ -170,5 +171,7 @@ def archive_website(
 
 def screenshot_only(url: str, output: Path, *, size: tuple[int, int]) -> None:
     output.mkdir(parents=True, exist_ok=True)
-    capture_screenshot(url, output / "screenshot.png", *size)
+    capture_screenshot(
+        url, output / "screenshot.png", *size, data_dir=output.parent.parent
+    )
     create_thumbnail(output / "screenshot.png", output / "thumbnail.jpg")

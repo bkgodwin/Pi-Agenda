@@ -81,6 +81,7 @@ DEFAULT_SETTINGS = {
     "holiday_until": "",
     "display_power_state": "unknown",
     "display_desired_state": "unknown",
+    "display_power_applied_at": "",
     "display_power_pending_at": "",
     "player_heartbeat": "",
     "player_visual_state": "unknown",

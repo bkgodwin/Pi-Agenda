@@ -206,7 +206,14 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
     local_now = now_utc.astimezone(ZoneInfo(timezone_name))
     online = get_setting(conn, "internet_online", "0") == "1"
     display_on = display_should_be_on(conn, now_utc, timezone_name)
+    forced_playlist_id = get_setting(conn, "forced_playlist_id", "")
     selected_playlists = _selected_playlists(conn, local_now)
+    forced_playlist = (
+        get_setting(conn, "schedule_paused", "0") == "1"
+        and forced_playlist_id.isdigit()
+        and len(selected_playlists) == 1
+        and int(selected_playlists[0]["id"]) == int(forced_playlist_id)
+    )
     playlist_ids = [playlist["id"] for playlist in selected_playlists]
     items: list[dict] = []
     seen_items: set[int] = set()
@@ -231,7 +238,9 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
         ).fetchall()
     for row in rows:
         item = dict(row)
-        if item["id"] in seen_items or not item_is_active(item, local_now):
+        if item["id"] in seen_items:
+            continue
+        if not forced_playlist and not item_is_active(item, local_now):
             continue
         generation = None
         if item["generation_key"]:
@@ -288,6 +297,7 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
         "timezone": timezone_name,
         "online": online,
         "display_on": display_on,
+        "forced_playlist": forced_playlist,
         "display_off_reason": display_off_reason(conn, now_utc, timezone_name),
         "version": version,
         "selection_key": selection_key,
