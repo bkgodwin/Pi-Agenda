@@ -171,7 +171,7 @@ Holiday mode pauses every playlist and holds the display off for 1–365 days. I
 
 ## One-click updates
 
-Select **Check for and install update** in Settings. Pi-Agenda compares the installed commit with the latest `main` branch. If already current, it reports that without rebooting. Otherwise it clones a clean copy, runs `start.sh --repair`, preserves application data and credentials, and reboots automatically.
+Select **Check for and install update** in Settings. Pi-Agenda compares the installed commit with the latest `main` branch. If already current, it reports that without rebooting. Otherwise it clones a clean copy, verifies the installed system dependencies, preserves application data and credentials, and reboots automatically. The process can take several minutes on a Raspberry Pi; the update fast path skips the package-index and Python-toolchain refreshes when the required dependencies are already present.
 
 The update control is installed by the current `start.sh`. An older installation must run `sudo ./start.sh --repair` once over SSH before the first one-click update. Update failures are available with:
 

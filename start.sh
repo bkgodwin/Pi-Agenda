@@ -31,6 +31,7 @@ for argument in "$@"; do
   case "$argument" in
     --reset-password) MODE="reset-password" ;;
     --repair) MODE="repair" ;;
+    --application-update) MODE="application-update" ;;
     --status) MODE="status" ;;
     --help|-h)
       printf '%s\n' "Usage: sudo ./start.sh [--repair|--reset-password|--status]"
@@ -93,15 +94,29 @@ esac
 [[ "$(dpkg --print-architecture)" == "armhf" ]] || warn "32-bit armhf is recommended for the supported 1 GB-or-less Raspberry Pi models."
 
 if [[ "$MODE" != "reset-password" ]]; then
-  info "Installing operating-system dependencies…"
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip python3-dev build-essential \
-    xserver-xorg xinit x11-xserver-utils openbox unclutter chromium \
-    dbus-x11 curl avahi-daemon libnss-mdns sudo rsync git \
-    libreoffice-impress poppler-utils ffmpeg wget \
+  SYSTEM_PACKAGES=(
+    python3 python3-venv python3-pip python3-dev build-essential
+    xserver-xorg xinit x11-xserver-utils openbox unclutter chromium
+    dbus-x11 curl avahi-daemon libnss-mdns sudo rsync git
+    libreoffice-impress poppler-utils ffmpeg wget
     fonts-dejavu-core fonts-liberation2 alsa-utils zram-tools
+  )
+  export DEBIAN_FRONTEND=noninteractive
+  MISSING_SYSTEM_PACKAGES=()
+  if [[ "$MODE" == "application-update" ]]; then
+    for package in "${SYSTEM_PACKAGES[@]}"; do
+      if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+        MISSING_SYSTEM_PACKAGES+=("$package")
+      fi
+    done
+  fi
+  if [[ "$MODE" != "application-update" || "${#MISSING_SYSTEM_PACKAGES[@]}" -gt 0 ]]; then
+    info "Installing operating-system dependencies…"
+    apt-get update
+    apt-get install -y --no-install-recommends "${SYSTEM_PACKAGES[@]}"
+  else
+    info "Operating-system dependencies are already installed; skipping apt refresh."
+  fi
 
   if ! getent group "$APP_GROUP" >/dev/null; then
     groupadd --system "$APP_GROUP"
@@ -131,7 +146,11 @@ if [[ "$MODE" != "reset-password" ]]; then
     python3 -m venv "$INSTALL_DIR/.venv"
     FRESH_VENV=1
   fi
-  "$INSTALL_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
+  if [[ "$FRESH_VENV" == "1" || "$MODE" != "application-update" ]]; then
+    "$INSTALL_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
+  else
+    info "Using the installed Python build tools for this application update."
+  fi
   if [[ "$FRESH_VENV" == "1" ]]; then
     "$INSTALL_DIR/.venv/bin/python" -m pip install "$INSTALL_DIR"
   else
@@ -142,6 +161,11 @@ if [[ "$MODE" != "reset-password" ]]; then
     # app package itself while leaving third-party dependencies untouched.
     "$INSTALL_DIR/.venv/bin/python" -m pip install \
       --force-reinstall --no-deps --no-build-isolation "$INSTALL_DIR"
+    if ! "$INSTALL_DIR/.venv/bin/python" -m pip check >/dev/null 2>&1; then
+      info "Installing changed Python dependencies…"
+      "$INSTALL_DIR/.venv/bin/python" -m pip install "$INSTALL_DIR"
+      "$INSTALL_DIR/.venv/bin/python" -m pip check
+    fi
   fi
 
   PLAYER_TOKEN=""
@@ -352,7 +376,7 @@ git clone --quiet --depth=1 --branch=main https://github.com/bkgodwin/Pi-Agenda.
 actual="$(git -C "$update_dir/repo" rev-parse HEAD)"
 [[ "$actual" == "$target" ]] || { log "main changed during update target=$target actual=$actual"; echo "Main changed during update; retry from Settings" >&2; exit 75; }
 log "running repair from cloned update"
-"$update_dir/repo/start.sh" --repair
+"$update_dir/repo/start.sh" --application-update
 log "repair finished; rebooting"
 systemctl reboot
 UPDATE_RUNNER

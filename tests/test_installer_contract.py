@@ -30,6 +30,8 @@ def test_repair_reinstalls_the_app_package_despite_an_unchanged_version():
     # would silently keep running old code.
     assert "--force-reinstall" in script
     assert "--no-deps" in script
+    assert "-m pip check" in script
+    assert "Installing changed Python dependencies" in script
 
 
 def test_kiosk_hides_the_pointer_and_logs_its_launch():
@@ -58,3 +60,20 @@ def test_update_helpers_log_and_use_unique_transient_units():
     assert 'unit="pi-agenda-update-$(date +%s)-$$"' in script
     assert "scheduled update unit=$unit" in script
     assert "repair finished; rebooting" in script
+
+
+def test_application_update_skips_slow_dependency_refreshes_when_satisfied():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    assert '"$update_dir/repo/start.sh" --application-update' in script
+    assert 'if [[ "$MODE" == "application-update" ]]; then' in script
+    assert '"${#MISSING_SYSTEM_PACKAGES[@]}" -gt 0' in script
+    assert "skipping apt refresh" in script
+    assert "Using the installed Python build tools" in script
+
+
+def test_update_ui_sets_expectations_for_slow_pi_installs():
+    script = (
+        Path(__file__).parents[1] / "src" / "pi_agenda" / "static" / "admin.js"
+    ).read_text(encoding="utf-8")
+    assert 'button.textContent = "Installing update…"' in script
+    assert "This can take several minutes" in script
