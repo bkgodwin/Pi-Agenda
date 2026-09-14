@@ -10,7 +10,6 @@ from pathlib import Path
 
 from .db import bump_playlist_version, transaction, utcnow
 
-
 STALE_STAGING_PREFIXES = ("pi-agenda-chromium-", "restore-", "pi-agenda-backup-")
 
 
