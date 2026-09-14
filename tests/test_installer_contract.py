@@ -49,3 +49,12 @@ def test_waitress_upload_buffers_use_managed_staging_tmpdir():
     script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
     assert '"$DATA_DIR/staging/tmp"' in script
     assert "TMPDIR=$DATA_DIR/staging/tmp" in script
+
+
+def test_update_helpers_log_and_use_unique_transient_units():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    assert "logger -t pi-agenda-update --" in script
+    assert "logger -t pi-agenda-update-runner --" in script
+    assert 'unit="pi-agenda-update-$(date +%s)-$$"' in script
+    assert "scheduled update unit=$unit" in script
+    assert "repair finished; rebooting" in script

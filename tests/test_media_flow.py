@@ -20,6 +20,13 @@ def png_upload() -> io.BytesIO:
     return output
 
 
+def image_upload(image_format: str) -> io.BytesIO:
+    output = io.BytesIO()
+    Image.new("RGB", (320, 180), (25, 120, 90)).save(output, format=image_format)
+    output.seek(0)
+    return output
+
+
 def test_image_upload_conversion_and_playlist(authenticated_client, runtime):
     response = authenticated_client.post(
         "/api/items",
@@ -87,6 +94,74 @@ def test_image_upload_conversion_and_playlist(authenticated_client, runtime):
             "SELECT active_generation_id FROM media_items WHERE id = ?", (item_id,)
         ).fetchone()
         assert restored["active_generation_id"]
+    finally:
+        conn.close()
+
+
+def test_jfif_image_upload_is_accepted(authenticated_client, runtime):
+    response = authenticated_client.post(
+        "/api/items",
+        data={
+            "name": "JFIF photo",
+            "type": "image",
+            "file": (image_upload("JPEG"), "photo.jfif"),
+        },
+        headers={"X-CSRF-Token": "test-csrf"},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 201, response.get_json()
+    item_id = response.get_json()["data"]["id"]
+
+    conn = connect(runtime.db_path)
+    try:
+        job = claim_job(conn)
+        process_item_job(runtime, conn, job)
+        finish_job(conn, job["id"])
+        item = conn.execute(
+            "SELECT source, active_generation_id FROM media_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        generation = conn.execute(
+            "SELECT relative_path FROM media_generations WHERE id = ?",
+            (item["active_generation_id"],),
+        ).fetchone()
+        assert item["source"].endswith("/original.jfif")
+        assert (
+            runtime.data_dir / generation["relative_path"] / "content.jpg"
+        ).is_file()
+    finally:
+        conn.close()
+
+
+def test_bmp_image_upload_is_normalized_to_png(authenticated_client, runtime):
+    response = authenticated_client.post(
+        "/api/items",
+        data={
+            "name": "BMP photo",
+            "type": "image",
+            "file": (image_upload("BMP"), "photo.bmp"),
+        },
+        headers={"X-CSRF-Token": "test-csrf"},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 201, response.get_json()
+    item_id = response.get_json()["data"]["id"]
+
+    conn = connect(runtime.db_path)
+    try:
+        job = claim_job(conn)
+        process_item_job(runtime, conn, job)
+        finish_job(conn, job["id"])
+        item = conn.execute(
+            "SELECT active_generation_id FROM media_items WHERE id = ?", (item_id,)
+        ).fetchone()
+        generation = conn.execute(
+            "SELECT relative_path FROM media_generations WHERE id = ?",
+            (item["active_generation_id"],),
+        ).fetchone()
+        assert (
+            runtime.data_dir / generation["relative_path"] / "content.png"
+        ).is_file()
     finally:
         conn.close()
 

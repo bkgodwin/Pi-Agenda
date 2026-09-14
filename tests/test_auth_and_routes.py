@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from types import SimpleNamespace
@@ -185,3 +186,67 @@ def test_update_reports_already_current(authenticated_client, monkeypatch):
     )
     assert response.status_code == 200
     assert response.get_json()["data"]["up_to_date"] is True
+
+
+def test_update_schedules_new_version_and_logs(
+    authenticated_client, monkeypatch, caplog
+):
+    current = "a" * 40
+    latest = "b" * 40
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if args[2] == "check":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f"current={current}\nlatest={latest}\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=0, stdout="Running as unit x\n", stderr="")
+
+    monkeypatch.setattr(routes_api.Path, "is_file", lambda _path: True)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    caplog.set_level(logging.INFO, logger="pi_agenda.routes_api")
+
+    response = authenticated_client.post(
+        "/api/system/update",
+        json={},
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
+
+    assert response.status_code == 202
+    assert response.get_json()["data"]["to"] == latest
+    assert calls == [
+        ["/usr/bin/sudo", "/usr/local/libexec/pi-agenda-update", "check"],
+        ["/usr/bin/sudo", "/usr/local/libexec/pi-agenda-update", "update", latest],
+    ]
+    assert "update scheduled successfully" in caplog.text
+
+
+def test_update_schedule_failure_returns_helper_stderr(
+    authenticated_client, monkeypatch
+):
+    current = "a" * 40
+    latest = "b" * 40
+
+    def fake_run(args, **_kwargs):
+        if args[2] == "check":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f"current={current}\nlatest={latest}\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="unit already exists")
+
+    monkeypatch.setattr(routes_api.Path, "is_file", lambda _path: True)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    response = authenticated_client.post(
+        "/api/system/update",
+        json={},
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
+
+    assert response.status_code == 500
+    assert response.get_json()["error"]["message"] == "unit already exists"

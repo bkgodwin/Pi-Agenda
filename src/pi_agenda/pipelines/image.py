@@ -6,7 +6,14 @@ from PIL import Image, ImageOps
 
 from .common import PipelineError, create_thumbnail, verify_image
 
-FORMAT_SUFFIX = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "GIF": ".gif"}
+FORMAT_SUFFIX = {
+    "JPEG": ".jpg",
+    "PNG": ".png",
+    "WEBP": ".webp",
+    "GIF": ".gif",
+    "BMP": ".png",
+    "TIFF": ".png",
+}
 
 
 def process_image(source: Path, output: Path, *, resolution: str) -> None:
@@ -16,7 +23,9 @@ def process_image(source: Path, output: Path, *, resolution: str) -> None:
         with Image.open(source) as image:
             image_format = image.format or "PNG"
             if image_format not in FORMAT_SUFFIX:
-                raise PipelineError("Unsupported image format")
+                raise PipelineError(
+                    "Unsupported image format. Use JPG, PNG, WebP, GIF, BMP, or TIFF."
+                )
             frames = getattr(image, "n_frames", 1)
             suffix = FORMAT_SUFFIX[image_format]
             destination = output / f"content{suffix}"
@@ -41,8 +50,10 @@ def process_image(source: Path, output: Path, *, resolution: str) -> None:
                     normalized = normalized.convert(
                         "RGBA" if "transparency" in image.info else "RGB"
                     )
-                save_format = image_format if image_format != "GIF" else "PNG"
-                if save_format == "PNG" and destination.suffix != ".png":
+                save_format = (
+                    image_format if image_format in {"JPEG", "PNG", "WEBP"} else "PNG"
+                )
+                if destination.suffix != FORMAT_SUFFIX[save_format]:
                     destination = output / "content.png"
                 normalized.save(destination, format=save_format, optimize=True)
             verify_image(destination)
