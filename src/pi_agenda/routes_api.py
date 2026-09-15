@@ -940,6 +940,8 @@ SETTABLE_SETTINGS = {
     "intranet_allowlist",
     "remote_player_enabled",
     "boot_splash_seconds",
+    "transition_duration_sec",
+    "transition_progress_color",
 }
 
 WIDGET_SETTINGS = {
@@ -1059,11 +1061,17 @@ def put_settings():
             ("default_slide_sec", 1, 3600),
             ("default_volume", 0, 100),
             ("boot_splash_seconds", 5, 60),
+            ("transition_duration_sec", 0, 3600),
             ("content_quota_bytes", 1024 * 1024, 10**13),
             ("minimum_free_bytes", 0, 10**13),
         ):
             if key in values and not minimum <= int(values[key]) <= maximum:
                 raise ValueError(f"{key} is outside its allowed range")
+        color = str(values.get("transition_progress_color", "#000000"))
+        if "transition_progress_color" in values and not re.fullmatch(
+            r"#[0-9a-fA-F]{6}", color
+        ):
+            raise ValueError("Transition color must be a six-digit hex color")
         if "remote_player_enabled" in values and str(
             values["remote_player_enabled"]
         ) not in {"0", "1"}:

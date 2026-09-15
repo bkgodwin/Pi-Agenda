@@ -11,11 +11,14 @@
   <label>Default slide seconds<input name="default_slide_sec" type="number" min="1" value="{{ settings.default_slide_sec }}"></label>
   <label>Default volume<input name="default_volume" type="number" min="0" max="100" value="{{ settings.default_volume }}"></label>
   <label>Boot address screen seconds<input name="boot_splash_seconds" type="number" min="5" max="60" value="{{ settings.boot_splash_seconds }}"></label>
+  <label>Class transition seconds<input name="transition_duration_sec" type="number" min="0" max="3600" value="{{ settings.transition_duration_sec }}"><small>At the start of each scheduled, non-default playlist, Pi-Agenda holds on the first item for this many seconds before normal rotation begins.</small></label>
+  <label>Transition bar color<input name="transition_progress_color" type="color" value="{{ settings.transition_progress_color }}"><small>The class progress bar uses this color during the transition countdown.</small></label>
   <label>Content quota (bytes)<input name="content_quota_bytes" type="number" min="1048576" value="{{ settings.content_quota_bytes }}"></label>
   <label>Reserved free space (bytes)<input name="minimum_free_bytes" type="number" min="0" value="{{ settings.minimum_free_bytes }}"></label>
   <label>Remote player access<select name="remote_player_enabled"><option value="0" {% if settings.remote_player_enabled == '0' %}selected{% endif %}>Disabled (recommended)</option><option value="1" {% if settings.remote_player_enabled == '1' %}selected{% endif %}>Device token required</option></select></label>
   {% if settings.remote_player_enabled == '1' %}<label class="span-2">Remote player device token<input value="{{ player_token }}" readonly autocomplete="off"><small>On the remote display, open <code>/player/connect</code> on this Pi and enter this token. Disable remote access when it is no longer needed.</small></label>{% endif %}
   <label class="span-2">Allowed private/intranet hostnames <input name="intranet_allowlist" value="{{ settings.intranet_allowlist }}" placeholder="intranet.school.local,10.0.0.25"><small>Comma separated. Only add hosts you trust.</small></label>
+  <p class="notice span-2">Transition time is for class changeovers. Put the agenda or welcome slide first in each scheduled playlist; students will see that first item while the class progress bar counts down to the start of class. After the transition, the playlist starts again from the first item and the progress bar restarts from the left edge for the remaining class time. A value of 0 disables this behavior.</p>
   <div class="span-2 form-actions"><button class="primary" type="submit">Save settings</button></div>
 </form>
 <section class="panel {% if settings.blank_test_enabled == '1' %}holiday-banner{% endif %}">

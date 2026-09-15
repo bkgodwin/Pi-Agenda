@@ -29,9 +29,15 @@
     if (!progressWidget || !progressWindow || !widgetConfig?.progress?.enabled || !displayOn) return;
     const start = new Date(progressWindow.start).getTime();
     const end = new Date(progressWindow.end).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      progressWidget.querySelector("span").style.width = "0%";
+      return;
+    }
     const percent = Math.max(0, Math.min(100, (Date.now() - start) / (end - start) * 100));
     progressWidget.querySelector("span").style.width = `${percent}%`;
-    progressWidget.title = `${progressWindow.playlist_name}: ${Math.round(percent)}% complete`;
+    progressWidget.title = progressWindow.transition_active
+      ? `${progressWindow.playlist_name}: class starts in ${Math.max(0, Math.ceil((end - Date.now()) / 1000))} seconds`
+      : `${progressWindow.playlist_name}: ${Math.round(percent)}% complete`;
   }
 
   function renderWidgets() {
@@ -57,7 +63,9 @@
     if (progressWidget) {
       progressWidget.className = `screen-progress position-${widgetConfig.progress.position}${progressVisible ? "" : " hidden"}`;
       progressWidget.style.height = `${widgetConfig.progress.height}px`;
-      progressWidget.querySelector("span").style.backgroundColor = widgetConfig.progress.color;
+      progressWidget.querySelector("span").style.backgroundColor = progressWindow?.transition_active
+        ? progressWindow.transition_color || widgetConfig.progress.color
+        : widgetConfig.progress.color;
     }
 
     const topProgress = progressVisible && widgetConfig.progress.position === "top" ? widgetConfig.progress.height : 0;
@@ -82,6 +90,12 @@
     return JSON.stringify({
       display_on: data.display_on,
       active_playlists: (data.active_playlists || []).map(playlist => playlist.id),
+      progress_window: data.progress_window ? {
+        playlist_id: data.progress_window.playlist_id,
+        start: data.progress_window.start,
+        end: data.progress_window.end,
+        transition_active: Boolean(data.progress_window.transition_active),
+      } : null,
       items: data.items || [],
     });
   }
@@ -184,25 +198,33 @@
     currentTimer = window.setTimeout(showNext, 2000);
   }
 
-  function showNext() {
-    if (!displayOn) {
-      return blackout();
-    }
-    if (!playlist.length) return standby();
-    clearStage();
-    const generation = playbackGeneration;
-    if (index >= playlist.length) index = 0;
-    const item = playlist[index++];
+  function transitionRemainingMs() {
+    if (!progressWindow?.transition_active || !playlist.length) return 0;
+    const end = new Date(progressWindow.end).getTime();
+    if (!Number.isFinite(end)) return 0;
+    return Math.max(0, end - Date.now());
+  }
+
+  function renderItem(item, generation, done, {hold = false} = {}) {
     currentItemId = item.id;
-    sendHeartbeat("playing", item.id);
+    sendHeartbeat(hold ? "transition" : "playing", item.id);
     renderWidgets();
     if (item.status === "error" || !navigator.onLine) {
       setStatus("amber", `Cached or stale · ${item.last_good_at || "unknown age"}`);
     } else {
-      setStatus("green", "Content ready");
+      setStatus("green", hold ? "Transition countdown" : "Content ready");
     }
     if (item.render_kind === "deck") {
-      showDeck(item, generation, showNext);
+      if (hold) {
+        const image = document.createElement("img");
+        image.src = item.slides[0] || item.render_url;
+        image.alt = item.name;
+        image.className = `fit-${item.fit_mode}`;
+        stage.append(image);
+        image.addEventListener("error", () => playbackFailed(item, generation));
+        return;
+      }
+      showDeck(item, generation, done);
       return;
     }
     const element = mediaElement(item);
@@ -210,7 +232,55 @@
     stage.append(element);
     if (["image", "video"].includes(item.render_kind)) element.addEventListener("error", () => playbackFailed(item, generation), {once: true});
     if (item.render_kind === "video") element.play().catch(() => playbackFailed(item, generation));
-    currentTimer = window.setTimeout(showNext, Math.max(1, item.dwell_sec) * 1000);
+    if (!hold) currentTimer = window.setTimeout(done, Math.max(1, item.dwell_sec) * 1000);
+  }
+
+  function showTransitionHold() {
+    const remaining = transitionRemainingMs();
+    if (remaining <= 0) {
+      progressWindow = {...progressWindow, transition_active: false, start: progressWindow?.transition_end || progressWindow?.end};
+      index = 0;
+      return showNext();
+    }
+    clearStage();
+    const generation = playbackGeneration;
+    index = 0;
+    renderItem(playlist[0], generation, showNext, {hold: true});
+    currentTimer = window.setTimeout(() => {
+      if (generation !== playbackGeneration) return;
+      progressWindow = {...progressWindow, transition_active: false, start: progressWindow?.transition_end || progressWindow?.end};
+      index = 0;
+      showNext();
+      fetchPlaylist();
+    }, remaining);
+  }
+
+  function showNext() {
+    try {
+      if (!displayOn) {
+        return blackout();
+      }
+      if (!playlist.length) return standby();
+      const remainingTransition = transitionRemainingMs();
+      if (remainingTransition > 0) return showTransitionHold();
+      clearStage();
+      const generation = playbackGeneration;
+      if (index >= playlist.length) index = 0;
+      const item = playlist[index++];
+      renderItem(item, generation, showNext);
+    } catch (error) {
+      recoverFromPlayerError(error);
+    }
+  }
+
+  function recoverFromPlayerError(error) {
+    console.error("Pi-Agenda player recovered from an error", error);
+    playlistSignature = null;
+    setStatus("red", "Player recovered from a display error; reloading playlist");
+    sendHeartbeat("error", currentItemId);
+    if (displayOn) standby("Recovering display");
+    else blackout();
+    window.setTimeout(fetchPlaylist, 1000);
   }
 
   async function fetchPlaylist() {
@@ -269,6 +339,8 @@
 
   window.addEventListener("online", () => fetchPlaylist());
   window.addEventListener("offline", () => setStatus("amber", "Network unavailable"));
+  window.addEventListener("error", event => recoverFromPlayerError(event.error || event.message));
+  window.addEventListener("unhandledrejection", event => recoverFromPlayerError(event.reason || "Unhandled promise rejection"));
   window.addEventListener("keydown", event => {
     if (event.key !== "Escape") return;
     event.preventDefault();
