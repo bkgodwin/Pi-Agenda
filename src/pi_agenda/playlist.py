@@ -37,9 +37,23 @@ def _widget_settings(conn) -> dict:
     }
 
 
-def _progress_window(playlists: list[dict], local_now: datetime) -> dict | None:
+def _bounded_int_setting(
+    conn, key: str, default: int, minimum: int, maximum: int
+) -> int:
+    try:
+        value = int(get_setting(conn, key, str(default)))
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def _progress_window(conn, playlists: list[dict], local_now: datetime) -> dict | None:
     """Find the first active, timed non-default playlist window."""
     current_time = local_now.timetz().replace(tzinfo=None)
+    transition_seconds = _bounded_int_setting(
+        conn, "transition_duration_sec", 0, 0, 3600
+    )
+    transition_color = get_setting(conn, "transition_progress_color", "#ffd43b")
     for playlist in playlists:
         if (
             playlist["is_default"]
@@ -68,11 +82,25 @@ def _progress_window(playlists: list[dict], local_now: datetime) -> dict | None:
             end = datetime.combine(local_now.date(), end_time, local_now.tzinfo)
         else:
             continue
+        transition_end = start + timedelta(seconds=transition_seconds)
+        transition_active = transition_seconds > 0 and local_now < transition_end
+        progress_start = start if transition_active else max(start, transition_end)
+        progress_end = transition_end if transition_active else end
+        if progress_start >= end:
+            progress_start = start
+            progress_end = end
+            transition_active = False
         return {
             "playlist_id": playlist["id"],
             "playlist_name": playlist["name"],
-            "start": start.isoformat(timespec="seconds"),
-            "end": end.isoformat(timespec="seconds"),
+            "start": progress_start.isoformat(timespec="seconds"),
+            "end": progress_end.isoformat(timespec="seconds"),
+            "class_end": end.isoformat(timespec="seconds"),
+            "playlist_start": start.isoformat(timespec="seconds"),
+            "transition_end": transition_end.isoformat(timespec="seconds"),
+            "transition_active": transition_active,
+            "transition_duration_sec": transition_seconds,
+            "transition_color": transition_color,
         }
     return None
 
@@ -281,12 +309,14 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
         seen_items.add(item["id"])
 
     version = int(get_setting(conn, "playlist_version", "1"))
+    progress_window = _progress_window(conn, selected_playlists, local_now)
     selection_payload = {
         "version": version,
         "display_on": display_on,
         "playlist_ids": playlist_ids,
         "item_ids": [item["id"] for item in items],
         "widgets": _widget_settings(conn),
+        "progress_window": progress_window,
     }
     selection_key = hashlib.sha256(
         json.dumps(selection_payload, sort_keys=True).encode()
@@ -310,6 +340,6 @@ def build_playlist(conn, *, cache_port: int, now_utc: datetime | None = None) ->
             for value in selected_playlists
         ],
         "widgets": _widget_settings(conn),
-        "progress_window": _progress_window(selected_playlists, local_now),
+        "progress_window": progress_window,
         "items": items,
     }

@@ -93,6 +93,8 @@ DEFAULT_SETTINGS = {
     "progress_widget_position": "bottom",
     "progress_widget_height": "8",
     "progress_widget_color": "#40c057",
+    "transition_duration_sec": "0",
+    "transition_progress_color": "#ffd43b",
     "ticker_widget_enabled": "0",
     "ticker_widget_text": "",
     "ticker_widget_speed": "20",

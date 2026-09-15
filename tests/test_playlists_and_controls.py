@@ -372,6 +372,45 @@ def test_widget_settings_and_timed_playlist_progress(authenticated_client, db):
     assert result["progress_window"]["end"].startswith("2026-09-07T10:00:00")
 
 
+def test_transition_window_counts_down_before_class_progress(db):
+    set_setting(db, "timezone", "UTC")
+    set_setting(db, "transition_duration_sec", "300")
+    set_setting(db, "transition_progress_color", "#ffcc00")
+    db.execute("UPDATE display_schedule SET mode = 'always_on' WHERE weekday = 0")
+    playlist_id = create_playlist(
+        db,
+        {
+            "name": "First period",
+            "days_mask": 1,
+            "start_time": "09:00",
+            "end_time": "10:00",
+        },
+    )
+    item_id = create_item(db, _announcement("Agenda", "Today"))
+    assign_item_to_playlists(db, item_id, [playlist_id])
+
+    transition = build_playlist(
+        db, cache_port=8002, now_utc=datetime(2026, 9, 7, 9, 2, tzinfo=UTC)
+    )
+    progress = transition["progress_window"]
+    assert progress["transition_active"] is True
+    assert progress["transition_duration_sec"] == 300
+    assert progress["transition_color"] == "#ffcc00"
+    assert progress["start"].startswith("2026-09-07T09:00:00")
+    assert progress["end"].startswith("2026-09-07T09:05:00")
+    assert progress["class_end"].startswith("2026-09-07T10:00:00")
+    assert progress["transition_end"].startswith("2026-09-07T09:05:00")
+
+    after_transition = build_playlist(
+        db, cache_port=8002, now_utc=datetime(2026, 9, 7, 9, 6, tzinfo=UTC)
+    )
+    progress = after_transition["progress_window"]
+    assert progress["transition_active"] is False
+    assert progress["start"].startswith("2026-09-07T09:05:00")
+    assert progress["end"].startswith("2026-09-07T10:00:00")
+    assert transition["selection_key"] != after_transition["selection_key"]
+
+
 def test_blanking_action_invalidates_stale_hardware_state(authenticated_client, db):
     set_setting(db, "display_power_state", "off")
     response = authenticated_client.post(
