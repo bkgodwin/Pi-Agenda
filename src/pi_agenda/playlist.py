@@ -24,6 +24,7 @@ def _widget_settings(conn) -> dict:
         },
         "progress": {
             "enabled": get_setting(conn, "progress_widget_enabled", "0") == "1",
+            "show_timer": get_setting(conn, "progress_widget_show_timer", "0") == "1",
             "position": get_setting(conn, "progress_widget_position", "bottom"),
             "height": int(get_setting(conn, "progress_widget_height", "8")),
             "color": get_setting(conn, "progress_widget_color", "#40c057"),

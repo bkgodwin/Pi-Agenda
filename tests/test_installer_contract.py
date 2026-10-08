@@ -77,3 +77,40 @@ def test_update_ui_sets_expectations_for_slow_pi_installs():
     ).read_text(encoding="utf-8")
     assert 'button.textContent = "Installing update…"' in script
     assert "This can take several minutes" in script
+
+
+def test_supervisor_is_independent_and_participates_in_service_lifecycle():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    unit = script.split(
+        "cat >/etc/systemd/system/pi-agenda-supervisor.service <<EOF", 1
+    )[1].split("\nEOF", 1)[0]
+    assert "run-supervisor" in unit
+    assert "pi-agenda-worker" not in unit
+    assert "Restart=always" in unit
+    for line in script.splitlines():
+        if line.startswith(
+            ("systemctl restart pi-agenda-web", "systemctl stop pi-agenda-supervisor")
+        ):
+            assert "pi-agenda-supervisor" in line
+    assert (
+        "systemctl stop pi-agenda-supervisor.service pi-agenda-kiosk.service" in script
+    )
+
+
+def test_conversion_and_kiosk_have_separate_memory_budgets():
+    script = (Path(__file__).parents[1] / "start.sh").read_text(encoding="utf-8")
+    for name in ("worker", "kiosk"):
+        unit = script.split(
+            f"cat >/etc/systemd/system/pi-agenda-{name}.service <<EOF", 1
+        )[1].split("\nEOF", 1)[0]
+        assert "Slice=pi-agenda-media.slice" in unit
+        assert "OOMPolicy=kill" in unit
+    pool = script.split("cat >/etc/systemd/system/pi-agenda-media.slice <<EOF", 1)[
+        1
+    ].split("\nEOF", 1)[0]
+    assert "MemoryMax=80%" in pool
+    worker = script.split("cat >/etc/systemd/system/pi-agenda-worker.service <<EOF", 1)[
+        1
+    ].split("\nEOF", 1)[0]
+    assert "MemoryMax=60%" in worker
+    assert "OOMScoreAdjust=500" in worker

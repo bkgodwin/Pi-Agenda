@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 from pi_agenda import routes_api, routes_player
-from pi_agenda.db import set_setting
+from pi_agenda.db import get_setting, set_setting
 
 
 def test_login_and_logout(client):
@@ -90,6 +91,40 @@ def test_remote_player_requires_enabled_device_token(app, client, db):
     assert "token=" not in connected.headers["Location"]
     assert client.get("/player", environ_base=remote).status_code == 200
     assert client.get("/api/playlist-now", environ_base=remote).status_code == 200
+
+
+def test_remote_player_heartbeat_cannot_hide_a_frozen_local_kiosk(app, client, db):
+    set_setting(db, "remote_player_enabled", "1")
+    app.config["PLAYER_TOKEN"] = "remote-device-secret"
+    remote = {"REMOTE_ADDR": "192.168.1.50"}
+    client.post(
+        "/player/connect", data={"token": "remote-device-secret"}, environ_base=remote
+    )
+    set_setting(db, "player_heartbeat", "old-local-heartbeat")
+    response = client.post(
+        "/api/health/player",
+        json={"state": "playing", "item_id": 12},
+        environ_base=remote,
+    )
+    assert response.status_code == 200
+    assert get_setting(db, "player_heartbeat") == "old-local-heartbeat"
+    response = client.post("/api/health/player", json={"state": "standby"})
+    assert response.status_code == 200
+    assert get_setting(db, "player_heartbeat") != "old-local-heartbeat"
+    assert get_setting(db, "player_visual_state") == "standby"
+
+
+def test_new_local_player_session_reverifies_display_power(client, db):
+    set_setting(db, "display_power_state", "off")
+    client.post("/api/health/player", json={"state": "black", "session_id": "first"})
+    assert get_setting(db, "display_power_state") == "unknown"
+    set_setting(db, "display_power_state", "off")
+    client.post("/api/health/player", json={"state": "black", "session_id": "first"})
+    assert get_setting(db, "display_power_state") == "off"
+    client.post(
+        "/api/health/player", json={"state": "black", "session_id": "new-browser"}
+    )
+    assert get_setting(db, "display_power_state") == "unknown"
 
 
 def test_invalid_override_minutes_returns_validation_error(authenticated_client):
@@ -218,8 +253,13 @@ def test_update_schedules_new_version_and_logs(
     assert response.status_code == 202
     assert response.get_json()["data"]["to"] == latest
     assert calls == [
-        ["/usr/bin/sudo", "/usr/local/libexec/pi-agenda-update", "check"],
-        ["/usr/bin/sudo", "/usr/local/libexec/pi-agenda-update", "update", latest],
+        ["/usr/bin/sudo", str(Path("/usr/local/libexec/pi-agenda-update")), "check"],
+        [
+            "/usr/bin/sudo",
+            str(Path("/usr/local/libexec/pi-agenda-update")),
+            "update",
+            latest,
+        ],
     ]
     assert "update scheduled successfully" in caplog.text
 

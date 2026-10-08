@@ -8,6 +8,7 @@
   const tickerWidget = document.getElementById("ticker-widget");
   const progressWidget = document.getElementById("progress-widget");
   const exitToken = document.querySelector('meta[name="kiosk-exit-token"]')?.content || "";
+  const playerSession = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let playlist = [];
   let playlistSignature = null;
   let etag = null;
@@ -19,6 +20,47 @@
   let currentItemId = null;
   let widgetConfig = null;
   let progressWindow = null;
+  let playlistRequest = false;
+  let heartbeatRequest = false;
+  let pendingHeartbeat = null;
+  let recoveryTimer = null;
+  let recovering = false;
+  let recoveryGeneration = 0;
+  let playbackDeadline = null;
+  let visualState = "standby";
+  let transitionFailed = false;
+  let lastPaintAt = Date.now();
+
+  // A compositor can stop producing frames while interval timers still run.
+  // Keep a single outstanding frame callback so that case is unhealthy too.
+  function monitorPaint() {
+    lastPaintAt = Date.now();
+    window.requestAnimationFrame(monitorPaint);
+  }
+  if (window.requestAnimationFrame) window.requestAnimationFrame(monitorPaint);
+
+  // Bound both the request and response body, including a stalled local server.
+  async function timedRequest(url, options, consume) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(url, {...options, signal: controller.signal});
+      return await consume(response);
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  function schedulePlayback(callback, delay) {
+    if (currentTimer) window.clearTimeout(currentTimer);
+    const generation = playbackGeneration;
+    playbackDeadline = Date.now() + delay;
+    currentTimer = window.setTimeout(() => {
+      if (generation !== playbackGeneration) return;
+      playbackDeadline = null;
+      callback();
+    }, delay);
+  }
 
   function updateClockWidget() {
     if (!clockWidget) return;
@@ -29,6 +71,13 @@
     if (!progressWidget || !progressWindow || !widgetConfig?.progress?.enabled || !displayOn) return;
     const start = new Date(progressWindow.start).getTime();
     const end = new Date(progressWindow.end).getTime();
+    const timer = progressWidget.querySelector("output");
+    if (timer) {
+      const valid = Number.isFinite(start) && Number.isFinite(end) && end > start;
+      timer.classList.toggle("hidden", !widgetConfig.progress.show_timer || !valid);
+      const remaining = valid ? Math.max(0, Math.ceil((end - Date.now()) / 1000)) : 0;
+      timer.textContent = `${progressWindow.transition_active ? "Transition" : "Class"} · ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")} remaining`;
+    }
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       progressWidget.querySelector("span").style.width = "0%";
       return;
@@ -45,6 +94,7 @@
     const clockVisible = displayOn && widgetConfig.clock.enabled;
     const tickerVisible = displayOn && widgetConfig.ticker.enabled && widgetConfig.ticker.text.trim();
     const progressVisible = displayOn && widgetConfig.progress.enabled && Boolean(progressWindow);
+    const progressHeight = widgetConfig.progress.show_timer ? Math.max(32, widgetConfig.progress.height) : widgetConfig.progress.height;
     widgetLayer.classList.toggle("hidden", !clockVisible && !tickerVisible && !progressVisible);
 
     if (clockWidget) {
@@ -62,14 +112,14 @@
 
     if (progressWidget) {
       progressWidget.className = `screen-progress position-${widgetConfig.progress.position}${progressVisible ? "" : " hidden"}`;
-      progressWidget.style.height = `${widgetConfig.progress.height}px`;
+      progressWidget.style.height = `${progressHeight}px`;
       progressWidget.querySelector("span").style.backgroundColor = progressWindow?.transition_active
         ? progressWindow.transition_color || widgetConfig.progress.color
         : widgetConfig.progress.color;
     }
 
-    const topProgress = progressVisible && widgetConfig.progress.position === "top" ? widgetConfig.progress.height : 0;
-    const bottomProgress = progressVisible && widgetConfig.progress.position === "bottom" ? widgetConfig.progress.height : 0;
+    const topProgress = progressVisible && widgetConfig.progress.position === "top" ? progressHeight : 0;
+    const bottomProgress = progressVisible && widgetConfig.progress.position === "bottom" ? progressHeight : 0;
     const topTicker = tickerVisible && widgetConfig.ticker.position === "top" ? 52 : 0;
     const bottomTicker = tickerVisible && widgetConfig.ticker.position === "bottom" ? 52 : 0;
     widgetLayer.style.setProperty("--top-progress", `${topProgress}px`);
@@ -103,12 +153,24 @@
   function clearStage() {
     if (currentTimer) window.clearTimeout(currentTimer);
     currentTimer = null;
+    playbackDeadline = null;
     playbackGeneration += 1;
+    // Release decoders, downloads and browsing contexts before starting the
+    // next item. Detached videos can otherwise keep resources until GC runs.
+    for (const video of stage.querySelectorAll("video")) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+    for (const frame of stage.querySelectorAll("iframe")) frame.src = "about:blank";
+    for (const image of stage.querySelectorAll("img")) image.removeAttribute("src");
     stage.replaceChildren();
   }
 
   function standby(message = "No content scheduled") {
     clearStage();
+    currentItemId = null;
+    visualState = "standby";
     const section = document.createElement("section");
     section.className = "standby";
     const clock = document.createElement("div");
@@ -127,6 +189,7 @@
   function blackout() {
     clearStage();
     currentItemId = null;
+    visualState = "black";
     renderWidgets();
     sendHeartbeat("black", null);
   }
@@ -186,20 +249,25 @@
       if (generation !== playbackGeneration) return;
       if (slide >= item.slides.length) return done();
       image.src = item.slides[slide++];
-      currentTimer = window.setTimeout(advance, item.slide_sec * 1000);
+      schedulePlayback(advance, item.slide_sec * 1000);
     };
     advance();
   }
 
   function playbackFailed(item, generation) {
     if (generation !== playbackGeneration) return;
-    if (currentTimer) window.clearTimeout(currentTimer);
     setStatus("red", `${item.name} could not be displayed; advancing`);
-    currentTimer = window.setTimeout(showNext, 2000);
+    // Invalidate callbacks from this media, including a late play() rejection.
+    clearStage();
+    if (progressWindow?.transition_active) {
+      transitionFailed = true;
+      index = playlist.length > 1 ? 1 : 0;
+    }
+    schedulePlayback(showNext, 2000);
   }
 
   function transitionRemainingMs() {
-    if (!progressWindow?.transition_active || !playlist.length) return 0;
+    if (transitionFailed || !progressWindow?.transition_active || !playlist.length) return 0;
     const end = new Date(progressWindow.end).getTime();
     if (!Number.isFinite(end)) return 0;
     return Math.max(0, end - Date.now());
@@ -207,7 +275,8 @@
 
   function renderItem(item, generation, done, {hold = false} = {}) {
     currentItemId = item.id;
-    sendHeartbeat(hold ? "transition" : "playing", item.id);
+    visualState = hold ? "transition" : "playing";
+    sendHeartbeat(visualState, item.id);
     renderWidgets();
     if (item.status === "error" || !navigator.onLine) {
       setStatus("amber", `Cached or stale · ${item.last_good_at || "unknown age"}`);
@@ -232,13 +301,13 @@
     stage.append(element);
     if (["image", "video"].includes(item.render_kind)) element.addEventListener("error", () => playbackFailed(item, generation), {once: true});
     if (item.render_kind === "video") element.play().catch(() => playbackFailed(item, generation));
-    if (!hold) currentTimer = window.setTimeout(done, Math.max(1, item.dwell_sec) * 1000);
+    if (!hold) schedulePlayback(done, Math.max(1, item.dwell_sec) * 1000);
   }
 
   function showTransitionHold() {
     const remaining = transitionRemainingMs();
     if (remaining <= 0) {
-      progressWindow = {...progressWindow, transition_active: false, start: progressWindow?.transition_end || progressWindow?.end};
+      progressWindow = {...progressWindow, transition_active: false, start: progressWindow?.transition_end || progressWindow?.end, end: progressWindow?.class_end || progressWindow?.end};
       index = 0;
       return showNext();
     }
@@ -246,9 +315,9 @@
     const generation = playbackGeneration;
     index = 0;
     renderItem(playlist[0], generation, showNext, {hold: true});
-    currentTimer = window.setTimeout(() => {
+    schedulePlayback(() => {
       if (generation !== playbackGeneration) return;
-      progressWindow = {...progressWindow, transition_active: false, start: progressWindow?.transition_end || progressWindow?.end};
+      progressWindow = {...progressWindow, transition_active: false, start: progressWindow?.transition_end || progressWindow?.end, end: progressWindow?.class_end || progressWindow?.end};
       index = 0;
       showNext();
       fetchPlaylist();
@@ -274,34 +343,57 @@
   }
 
   function recoverFromPlayerError(error) {
+    if (recovering) return;
+    recovering = true;
+    recoveryGeneration += 1;
     console.error("Pi-Agenda player recovered from an error", error);
     playlistSignature = null;
+    etag = null;
     setStatus("red", "Player recovered from a display error; reloading playlist");
     sendHeartbeat("error", currentItemId);
     if (displayOn) standby("Recovering display");
     else blackout();
-    window.setTimeout(fetchPlaylist, 1000);
+    visualState = "error";
+    if (recoveryTimer) window.clearTimeout(recoveryTimer);
+    recoveryTimer = window.setTimeout(() => {
+      recoveryTimer = null;
+      fetchPlaylist();
+    }, 1000);
   }
 
   async function fetchPlaylist() {
+    if (playlistRequest) return;
+    const generation = recoveryGeneration;
+    playlistRequest = true;
     const headers = etag ? {"If-None-Match": etag} : {};
     try {
-      const response = await fetch("/api/playlist-now", {cache: "no-store", headers});
-      if (response.status === 304) {
+      const result = await timedRequest("/api/playlist-now", {cache: "no-store", headers}, async response => {
+        if (response.status === 304) return null;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return {envelope: await response.json(), etag: response.headers.get("ETag")};
+      });
+      if (generation !== recoveryGeneration) return;
+      if (result === null) {
         pollFailures = 0;
         return;
       }
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      etag = response.headers.get("ETag");
-      const envelope = await response.json();
-      const data = envelope.data;
+      const data = result.envelope.data;
+      if (!data || !Array.isArray(data.items) || typeof data.display_on !== "boolean") {
+        throw new Error("Invalid playlist response");
+      }
+      etag = result.etag;
+      recovering = false;
+      if (recoveryTimer) window.clearTimeout(recoveryTimer);
+      recoveryTimer = null;
       pollFailures = 0;
+      if (!displayOn && data.display_on) lastPaintAt = Date.now();
       displayOn = data.display_on;
       widgetConfig = data.widgets;
       progressWindow = data.progress_window;
       const nextPlaylistSignature = playbackSignature(data);
       const selectionChanged = nextPlaylistSignature !== playlistSignature;
       if (selectionChanged) {
+        transitionFailed = false;
         playlistSignature = nextPlaylistSignature;
         playlist = data.items;
         index = 0;
@@ -320,20 +412,34 @@
     } catch (error) {
       pollFailures += 1;
       if (pollFailures >= 3) setStatus("amber", "Backend unavailable; continuing cached playlist");
-      if (!playlist.length) standby("Waiting for Pi-Agenda service");
+      if (!playlist.length && displayOn) standby("Waiting for Pi-Agenda service");
+    } finally {
+      playlistRequest = false;
     }
   }
 
   async function sendHeartbeat(state = "playing", itemId = null) {
+    if (displayOn && Date.now() - lastPaintAt > 120000) state = "error";
+    pendingHeartbeat = {state, item_id: itemId, session_id: playerSession};
+    if (heartbeatRequest) return;
+    heartbeatRequest = true;
     try {
-      await fetch("/api/health/player", {
-        method: "POST",
-        cache: "no-store",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({state, item_id: itemId}),
-      });
-    } catch (_error) {
-      // The playlist watchdog will retain the current in-memory rotation.
+      while (pendingHeartbeat) {
+        const heartbeat = pendingHeartbeat;
+        pendingHeartbeat = null;
+        try {
+          await timedRequest("/api/health/player", {
+            method: "POST",
+            cache: "no-store",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(heartbeat),
+          }, response => response.text());
+        } catch (_error) {
+          // The independent watchdog detects loss of contact with the kiosk.
+        }
+      }
+    } finally {
+      heartbeatRequest = false;
     }
   }
 
@@ -353,7 +459,10 @@
   });
   fetchPlaylist();
   window.setInterval(fetchPlaylist, 5000);
+  window.setInterval(() => {
+    if (displayOn && playbackDeadline !== null && Date.now() > playbackDeadline + 15000) showNext();
+  }, 5000);
   window.setInterval(updateClockWidget, 1000);
   window.setInterval(updateProgressWidget, 1000);
-  window.setInterval(() => sendHeartbeat(displayOn ? "playing" : "black", currentItemId), 30000);
+  window.setInterval(() => sendHeartbeat(visualState, currentItemId), 30000);
 })();

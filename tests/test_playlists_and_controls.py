@@ -656,3 +656,30 @@ def test_repeated_migration_preserves_exclusive_playlist_membership(runtime):
         assert playlist_ids_for_item(checked, item_id) == [playlist_id]
     finally:
         checked.close()
+
+
+def test_progress_countdown_setting_round_trips_and_rejects_invalid_values(
+    authenticated_client, db
+):
+    assert get_setting(db, "progress_widget_show_timer") == "0"
+    headers = {"X-CSRF-Token": "test-csrf"}
+    for enabled in ("1", "0"):
+        response = authenticated_client.put(
+            "/api/widgets",
+            json={"progress_widget_show_timer": enabled},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert (
+            authenticated_client.get("/api/widgets").get_json()["data"][
+                "progress_widget_show_timer"
+            ]
+            == enabled
+        )
+        payload = build_playlist(db, cache_port=8002)
+        assert payload["widgets"]["progress"]["show_timer"] is (enabled == "1")
+    response = authenticated_client.put(
+        "/api/widgets", json={"progress_widget_show_timer": "invalid"}, headers=headers
+    )
+    assert response.status_code == 400
+    assert get_setting(db, "progress_widget_show_timer") == "0"

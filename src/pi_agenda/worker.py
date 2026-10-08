@@ -4,7 +4,6 @@ import logging
 import shutil
 import signal
 import socket
-import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,13 +26,10 @@ from .pipelines.m365 import refresh_m365
 from .pipelines.presentation import render_presentation
 from .pipelines.video import process_video
 from .pipelines.website import archive_website
-from .schedules import display_should_be_on
 from .security import validate_remote_url
 
 LOG = logging.getLogger("pi_agenda.worker")
 STOP = False
-WORKER_STARTED = time.monotonic()
-POWER_REASSERT_SECONDS = 300
 
 
 def _stop(_signum, _frame) -> None:
@@ -188,111 +184,17 @@ def _enqueue_periodic(conn) -> None:
         enqueue_job(conn, "refresh", row["id"])
 
 
-def _apply_power_state(conn) -> None:
-    timezone_name = get_setting(conn, "timezone", "America/Chicago")
-    desired = display_should_be_on(conn, datetime.now(UTC), timezone_name)
-    current = get_setting(conn, "display_power_state", "unknown")
-    desired_name = "on" if desired else "off"
-    set_setting(conn, "display_desired_state", desired_name)
-    now_utc = datetime.now(UTC)
-    should_reassert_on = False
-    if desired_name == "on" and current == "on":
-        last_applied_text = get_setting(conn, "display_power_applied_at", "")
-        player_state = get_setting(conn, "player_visual_state", "")
-        should_reassert_on = player_state == "black"
-        try:
-            last_applied = datetime.fromisoformat(last_applied_text)
-            if last_applied.tzinfo is None:
-                last_applied = last_applied.replace(tzinfo=UTC)
-            should_reassert_on = should_reassert_on or (
-                now_utc - last_applied > timedelta(seconds=POWER_REASSERT_SECONDS)
-            )
-        except ValueError:
-            should_reassert_on = True
-    if current == desired_name and not should_reassert_on:
-        set_setting(conn, "display_power_pending_at", "")
-        return
-    if (
-        desired_name == "off"
-        and get_setting(conn, "player_visual_state", "") != "black"
-    ):
-        pending_text = get_setting(conn, "display_power_pending_at", "")
-        if not pending_text:
-            set_setting(conn, "display_power_pending_at", utcnow())
-            return
-        try:
-            pending_at = datetime.fromisoformat(pending_text)
-            if pending_at.tzinfo is None:
-                pending_at = pending_at.replace(tzinfo=UTC)
-            if now_utc - pending_at < timedelta(seconds=20):
-                return
-        except ValueError:
-            set_setting(conn, "display_power_pending_at", utcnow())
-            return
-    helper = Path("/usr/local/libexec/pi-agenda-display")
-    if helper.is_file():
-        result = subprocess.run(
-            ["/usr/bin/sudo", str(helper), desired_name], check=False, timeout=20
-        )
-        if result.returncode != 0:
-            LOG.warning("display helper failed with exit code %s", result.returncode)
-            return
-    set_setting(conn, "display_power_state", desired_name)
-    set_setting(conn, "display_power_applied_at", utcnow())
-    set_setting(conn, "display_power_pending_at", "")
-
-
-def _watchdog_player(conn) -> None:
-    if get_setting(conn, "display_desired_state", "on") != "on":
-        return
-    heartbeat_text = get_setting(conn, "player_heartbeat", "")
-    if not heartbeat_text:
-        if time.monotonic() - WORKER_STARTED < 180:
-            return
-    else:
-        try:
-            heartbeat = datetime.fromisoformat(heartbeat_text)
-            if heartbeat.tzinfo is None:
-                heartbeat = heartbeat.replace(tzinfo=UTC)
-        except ValueError:
-            return
-        if datetime.now(UTC) - heartbeat < timedelta(seconds=120):
-            return
-    last_restart_text = get_setting(conn, "last_kiosk_restart", "")
-    if last_restart_text:
-        try:
-            last_restart = datetime.fromisoformat(last_restart_text)
-            if last_restart.tzinfo is None:
-                last_restart = last_restart.replace(tzinfo=UTC)
-            if datetime.now(UTC) - last_restart < timedelta(minutes=5):
-                return
-        except ValueError:
-            pass
-    helper = Path("/usr/local/libexec/pi-agenda-kiosk-control")
-    if helper.is_file():
-        result = subprocess.run(
-            ["/usr/bin/sudo", str(helper), "restart"], check=False, timeout=20
-        )
-        if result.returncode == 0:
-            set_setting(conn, "last_kiosk_restart", utcnow())
-
-
 def run_worker(config: RuntimeConfig) -> None:
     config.ensure_directories()
     migrate(config.db_path)
     conn = connect(config.db_path)
     recover_interrupted_jobs(conn)
     cleanup_staging(config.data_dir)
-    # This value describes real hardware and cannot be trusted across an X
-    # session restart or reboot. Reapply and verify the desired state.
-    set_setting(conn, "display_power_state", "unknown")
-    set_setting(conn, "display_power_pending_at", "")
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     last_periodic = 0.0
     last_health = 0.0
     last_cleanup = 0.0
-    last_power = 0.0
     try:
         while not STOP:
             now = time.monotonic()
@@ -302,10 +204,6 @@ def run_worker(config: RuntimeConfig) -> None:
             if now - last_health >= 60:
                 _probe_internet(conn)
                 last_health = now
-            if now - last_power >= 2:
-                _apply_power_state(conn)
-                _watchdog_player(conn)
-                last_power = now
             if now - last_cleanup >= 3600:
                 cleanup_retired(conn, config.data_dir)
                 last_cleanup = now

@@ -62,7 +62,7 @@ management_addresses() {
 if [[ "$MODE" == "status" ]]; then
   management_addresses
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl --no-pager --full status pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-kiosk || true
+    systemctl --no-pager --full status pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-supervisor pi-agenda-kiosk || true
   fi
   [[ -x "$INSTALL_DIR/.venv/bin/pi-agenda" ]] && "$INSTALL_DIR/.venv/bin/pi-agenda" status || true
   exit 0
@@ -261,7 +261,10 @@ query="$(runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority"
 output="$(printf '%s\n' "$query" | awk '/ connected/{if ($0 ~ /[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/) {print $1; found=1; exit} if (!fallback) fallback=$1} END{if (!found) print fallback}')"
 if [[ -n "$output" ]]; then
   if [[ "$state" == "on" ]]; then
-    runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --output "$output" --auto
+    active="$(printf '%s\n' "$query" | awk -v wanted="$output" '$1 == wanted {print; exit}')"
+    if [[ ! "$active" =~ [0-9]+x[0-9]+\+[0-9]+\+[0-9]+ ]]; then
+      runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xrandr --output "$output" --auto
+    fi
     runuser -u pi-agenda -- env DISPLAY="$display" XAUTHORITY="$xauthority" xset dpms force on || true
     # Restoring an explicitly blanked display must not also restore X11's
     # inactivity timer; only the Pi-Agenda schedule should power it down.
@@ -318,7 +321,7 @@ KIOSK_HELPER
   cat >/usr/local/libexec/pi-agenda-exit-to-os <<'EXIT_HELPER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-systemctl stop pi-agenda-kiosk.service
+systemctl stop pi-agenda-supervisor.service pi-agenda-kiosk.service
 manager="$(cat /etc/pi-agenda-display-manager 2>/dev/null || true)"
 if [[ -n "$manager" ]] && systemctl cat "$manager" >/dev/null 2>&1; then
   systemctl start "$manager"
@@ -389,17 +392,17 @@ set -Eeuo pipefail
 if [[ "$1" == "restart" ]]; then
   exec /usr/bin/systemd-run --quiet --collect --unit=pi-agenda-requested-restart \
     --on-active=2s /usr/bin/systemctl restart \
-    pi-agenda-web.service pi-agenda-worker.service pi-agenda-cache.service pi-agenda-kiosk.service
+    pi-agenda-web.service pi-agenda-worker.service pi-agenda-cache.service pi-agenda-supervisor.service pi-agenda-kiosk.service
 fi
 cat >/run/pi-agenda-restore.sh <<'RESTORE'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cleanup() {
-  systemctl start pi-agenda-web.service pi-agenda-cache.service pi-agenda-worker.service pi-agenda-kiosk.service || true
+  systemctl start pi-agenda-web.service pi-agenda-cache.service pi-agenda-worker.service pi-agenda-supervisor.service pi-agenda-kiosk.service || true
   rm -f /run/pi-agenda-restore.sh
 }
 trap cleanup EXIT
-systemctl stop pi-agenda-kiosk.service pi-agenda-worker.service pi-agenda-cache.service pi-agenda-web.service
+systemctl stop pi-agenda-supervisor.service pi-agenda-kiosk.service pi-agenda-worker.service pi-agenda-cache.service pi-agenda-web.service
 set -a
 source /etc/pi-agenda.env
 set +a
@@ -451,9 +454,21 @@ ReadWritePaths=$DATA_DIR
 WantedBy=multi-user.target
 EOF
 
+  # Share the media budget so the browser and converter can borrow spare RAM
+  # without allowing their combined use to exhaust the Pi. The supervisor stays
+  # outside this slice and survives a media OOM.
+  cat >/etc/systemd/system/pi-agenda-media.slice <<EOF
+[Unit]
+Description=Pi-Agenda bounded media memory pool
+
+[Slice]
+MemoryHigh=70%
+MemoryMax=80%
+EOF
+
   cat >/etc/systemd/system/pi-agenda-worker.service <<EOF
 [Unit]
-Description=Pi-Agenda background worker and scheduler
+Description=Pi-Agenda background conversion worker
 After=network.target pi-agenda-web.service
 Requires=pi-agenda-web.service
 
@@ -469,8 +484,11 @@ RestartSec=3
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=$DATA_DIR
-MemoryHigh=75%
-MemoryMax=90%
+Slice=pi-agenda-media.slice
+MemoryHigh=45%
+MemoryMax=60%
+OOMPolicy=kill
+OOMScoreAdjust=500
 TasksMax=128
 
 [Install]
@@ -495,6 +513,29 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadOnlyPaths=$DATA_DIR/generations
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  cat >/etc/systemd/system/pi-agenda-supervisor.service <<EOF
+[Unit]
+Description=Pi-Agenda display scheduler and kiosk watchdog
+After=pi-agenda-web.service
+Wants=pi-agenda-web.service
+
+[Service]
+Type=simple
+User=$APP_USER
+Group=$APP_GROUP
+EnvironmentFile=$ENV_FILE
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/.venv/bin/pi-agenda run-supervisor
+Restart=always
+RestartSec=3
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=$DATA_DIR
 
 [Install]
 WantedBy=multi-user.target
@@ -525,6 +566,9 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=/usr/bin/xinit $INSTALL_DIR/runtime/kiosk-launch.sh -- $XORG_BIN :0 vt1 -keeptty -nolisten tcp
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
+Slice=pi-agenda-media.slice
+OOMPolicy=kill
 
 [Install]
 WantedBy=multi-user.target
@@ -541,7 +585,7 @@ EOF
   fi
   systemctl set-default multi-user.target
   systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true
-  systemctl enable avahi-daemon pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-kiosk
+  systemctl enable avahi-daemon pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-supervisor pi-agenda-kiosk
 fi
 
 set -a
@@ -581,7 +625,7 @@ if [[ "$MODE" == "reset-password" ]]; then
 fi
 
 info "Starting Pi-Agenda services…"
-systemctl restart pi-agenda-web pi-agenda-cache pi-agenda-worker pi-agenda-kiosk
+systemctl restart pi-agenda-web pi-agenda-cache pi-agenda-worker pi-agenda-supervisor pi-agenda-kiosk
 
 ready=0
 for _ in $(seq 1 45); do

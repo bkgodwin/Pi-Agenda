@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import sys
+import time
 import zipfile
 
 import pytest
 
 from pi_agenda.pipelines import website
-from pi_agenda.pipelines.common import PipelineError
+from pi_agenda.pipelines.common import PipelineError, run_command
 from pi_agenda.pipelines.m365 import normalize_m365_input, with_download_parameter
 from pi_agenda.pipelines.presentation import _validate_source
 
@@ -66,3 +68,52 @@ def test_presentation_signatures_are_validated(tmp_path):
         bundle.writestr("[Content_Types].xml", "<Types/>")
         bundle.writestr("ppt/presentation.xml", "<presentation/>")
     _validate_source(valid_pptx)
+
+
+@pytest.mark.parametrize("separate_session", [False, True])
+def test_command_timeout_kills_descendants_holding_output_pipes(
+    tmp_path, separate_session
+):
+    import psutil
+
+    pid_file = tmp_path / "child.pid"
+    script = tmp_path / "spawn.py"
+    script.write_text(
+        "import pathlib, subprocess, sys, time\n"
+        f"child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session={separate_session!r})\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(PipelineError, match="timed out"):
+            run_command([sys.executable, str(script), str(pid_file)], timeout=2)
+        assert time.monotonic() - started < 10
+        assert pid_file.is_file()
+        child_pid = int(pid_file.read_text())
+        try:
+            child = psutil.Process(child_pid)
+            child.wait(timeout=3)
+        except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+            # A killed orphan may briefly be a zombie until Linux init reaps it.
+            assert (
+                not psutil.pid_exists(child_pid)
+                or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+            )
+    finally:
+        if pid_file.exists():
+            try:
+                psutil.Process(int(pid_file.read_text())).kill()
+            except psutil.NoSuchProcess:
+                pass
+
+
+def test_command_output_and_failure_are_preserved():
+    result = run_command([sys.executable, "-c", "print('ready')"], timeout=5)
+    assert result.stdout.strip() == "ready"
+    with pytest.raises(PipelineError, match="failed.*broken"):
+        run_command(
+            [sys.executable, "-c", "import sys; print('broken'); sys.exit(2)"],
+            timeout=5,
+        )

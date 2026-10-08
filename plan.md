@@ -168,7 +168,8 @@ This system can contain student names, classroom schedules, and class photos. Be
 ### 5.1 Processes and systemd units
 
 - `pi-agenda-web.service`: Flask application served by Waitress as the dedicated `pi-agenda` user.
-- `pi-agenda-worker.service`: durable job runner, periodic scheduling, health checks, and display-state decisions.
+- `pi-agenda-worker.service`: durable job runner, remote refresh scheduling, and connectivity checks.
+- `pi-agenda-supervisor.service`: display power scheduling and kiosk recovery, independent of conversion jobs.
 - `pi-agenda-cache.service`: minimal static server for isolated archived website content, loopback only.
 - `pi-agenda-kiosk.service`: X11/Openbox/Chromium kiosk on the physical display, without an interactive desktop login.
 - The kiosk is enabled by `multi-user.target`, owns `tty1`, and suppresses the graphical login manager during boot. Escape schedules a clean kiosk stop and starts the detected desktop manager, or the Lite console when no desktop is installed. Reboot returns to kiosk mode.

@@ -193,7 +193,7 @@
     widgetsForm.addEventListener("submit", event => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(widgetsForm).entries());
-      ["clock_widget_enabled", "progress_widget_enabled", "ticker_widget_enabled"].forEach(name => {
+      ["clock_widget_enabled", "progress_widget_enabled", "progress_widget_show_timer", "ticker_widget_enabled"].forEach(name => {
         data[name] = widgetsForm.elements[name].checked ? "1" : "0";
       });
       api("/api/widgets", {method: "PUT", body: JSON.stringify(data)})

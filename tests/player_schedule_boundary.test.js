@@ -21,6 +21,7 @@ function fakeElement(tagName = "div") {
     },
     append(...children) { this.children.push(...children); },
     addEventListener() {},
+    querySelectorAll() { return []; },
     querySelector() {
       this.span ||= fakeElement("span");
       return this.span;
@@ -122,6 +123,7 @@ test("a schedule selection change interrupts the current item", async () => {
   ];
   const window = {
     addEventListener() {},
+    querySelectorAll() { return []; },
     setTimeout(callback, delay) {
       const timer = {kind: "timeout", callback, delay, cleared: false};
       timers.push(timer);
@@ -136,6 +138,7 @@ test("a schedule selection change interrupts the current item", async () => {
   };
   const context = {
     console,
+    AbortController,
     navigator: {onLine: true},
     window,
     document: {
@@ -195,6 +198,7 @@ test("transition holds the first item then restarts rotation from it", async () 
   const responses = [transitionPlaylistData("transition")];
   const window = {
     addEventListener() {},
+    querySelectorAll() { return []; },
     setTimeout(callback, delay) {
       const timer = {kind: "timeout", callback, delay, cleared: false};
       timers.push(timer);
@@ -209,6 +213,7 @@ test("transition holds the first item then restarts rotation from it", async () 
   };
   const context = {
     console,
+    AbortController,
     navigator: {onLine: true},
     window,
     document: {
@@ -236,10 +241,10 @@ test("transition holds the first item then restarts rotation from it", async () 
 
   assert.equal(stage.firstElementChild.textContent, "Agenda");
   assert.equal(progressBar.style.backgroundColor, "#ffd43b");
-  assert.ok(timers.some(timer => timer.kind === "timeout" && timer.delay > 1000 && timer.delay <= 60000));
+  assert.ok(timers.some(timer => timer.kind === "timeout" && !timer.cleared && timer.delay > 1000 && timer.delay <= 60000));
   assert.equal(timers.some(timer => timer.kind === "timeout" && timer.delay === 120000), false);
 
-  const transitionTimer = timers.find(timer => timer.kind === "timeout" && timer.delay > 1000 && timer.delay <= 60000);
+  const transitionTimer = timers.find(timer => timer.kind === "timeout" && !timer.cleared && timer.delay > 1000 && timer.delay <= 60000);
   transitionTimer.callback();
 
   assert.equal(stage.firstElementChild.textContent, "Agenda");
@@ -271,6 +276,7 @@ test("a widget-only update does not interrupt the current item", async () => {
   ];
   const window = {
     addEventListener() {},
+    querySelectorAll() { return []; },
     setTimeout(callback, delay) {
       const timer = {kind: "timeout", callback, delay, cleared: false};
       timers.push(timer);
@@ -285,6 +291,7 @@ test("a widget-only update does not interrupt the current item", async () => {
   };
   const context = {
     console,
+    AbortController,
     navigator: {onLine: true},
     window,
     document: {

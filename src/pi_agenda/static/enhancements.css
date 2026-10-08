@@ -49,6 +49,7 @@
 .screen-progress.position-top { top: 0; }
 .screen-progress.position-bottom { bottom: 0; }
 .screen-progress span { display: block; width: 0; height: 100%; opacity: .78; transition: width 1s linear; box-shadow: 0 0 10px rgba(255,255,255,.2); }
+.progress-timer { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 1px 4px #000, 0 0 8px #000; background: rgba(0,0,0,.25); }
 .screen-ticker { position: absolute; left: 0; right: 0; height: 52px; z-index: 2; overflow: hidden; display: flex; align-items: center; background: rgba(15,23,42,.62); border-color: rgba(255,255,255,.18); border-style: solid; border-width: 1px 0; backdrop-filter: blur(8px); color: #fff; font-size: 28px; font-weight: 600; text-shadow: 0 2px 4px rgba(0,0,0,.65); }
 .screen-ticker.position-top { top: var(--top-progress); }
 .screen-ticker.position-bottom { bottom: var(--bottom-progress); }

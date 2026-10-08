@@ -949,6 +949,7 @@ WIDGET_SETTINGS = {
     "clock_widget_position",
     "clock_widget_size",
     "progress_widget_enabled",
+    "progress_widget_show_timer",
     "progress_widget_position",
     "progress_widget_height",
     "progress_widget_color",
@@ -980,6 +981,7 @@ def put_widgets():
         for key in (
             "clock_widget_enabled",
             "progress_widget_enabled",
+            "progress_widget_show_timer",
             "ticker_widget_enabled",
         ):
             if key in values and str(values[key]) not in {"0", "1"}:
@@ -1264,6 +1266,8 @@ def system_logs():
                 "pi-agenda-web.service",
                 "-u",
                 "pi-agenda-worker.service",
+                "-u",
+                "pi-agenda-supervisor.service",
                 "-u",
                 "pi-agenda-cache.service",
                 "-u",
