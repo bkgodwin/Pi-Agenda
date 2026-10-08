@@ -17,6 +17,7 @@ from .app import create_app
 from .backup import restore_backup
 from .config import RuntimeConfig
 from .db import connect, get_setting, migrate, set_setting
+from .supervisor import run_supervisor
 from .worker import run_worker
 
 
@@ -67,6 +68,7 @@ def main(argv: list[str] | None = None) -> None:
     password_parser.add_argument("--password-stdin", action="store_true")
     subparsers.add_parser("run-web")
     subparsers.add_parser("run-worker")
+    subparsers.add_parser("run-supervisor")
     subparsers.add_parser("run-cache")
     subparsers.add_parser("status")
     restore_parser = subparsers.add_parser("restore-backup")
@@ -89,6 +91,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "run-worker":
         logging.basicConfig(level=os.environ.get("PI_AGENDA_LOG_LEVEL", "INFO"))
         run_worker(config)
+    elif args.command == "run-supervisor":
+        logging.basicConfig(level=os.environ.get("PI_AGENDA_LOG_LEVEL", "INFO"))
+        run_supervisor(config)
     elif args.command == "run-cache":
         logging.basicConfig(level=os.environ.get("PI_AGENDA_LOG_LEVEL", "INFO"))
         directory = config.data_dir / "generations"

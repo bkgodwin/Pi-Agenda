@@ -19,7 +19,9 @@
       <label>Height <output data-for="progress_widget_height">{{ settings.progress_widget_height }} px</output><input name="progress_widget_height" type="range" min="3" max="30" value="{{ settings.progress_widget_height }}"></label>
       <label>Color<input name="progress_widget_color" type="color" value="{{ settings.progress_widget_color }}"></label>
     </div>
+    <label class="switch"><input type="checkbox" name="progress_widget_show_timer" {% if settings.progress_widget_show_timer == '1' %}checked{% endif %}> Show time remaining (minutes:seconds)</label>
     <p class="field-help">The bar is hidden for the default playlist and playlists without start/end times.</p>
+    <p class="field-help">The timer counts down the transition, then the class period. When enabled, the bar is at least 32 px tall to keep the timer readable.</p>
   </section>
   <section class="panel widget-card">
     <div class="widget-card-heading"><div><h2>Ticker</h2><p>A continuous, translucent scrolling message.</p></div><label class="switch"><input type="checkbox" name="ticker_widget_enabled" {% if settings.ticker_widget_enabled == '1' %}checked{% endif %}> Enabled</label></div>

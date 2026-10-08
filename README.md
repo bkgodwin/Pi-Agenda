@@ -156,7 +156,7 @@ Failed conversions and remote refreshes retry automatically with bounded backoff
 The **Widgets** tab configures overlays that remain readable without replacing the current content:
 
 - A 12-hour digital clock can be placed in any corner or at the top/bottom center, with an adjustable text size and translucent glass background.
-- A class progress bar tracks the active timed playlist from its start to end time. Its edge, height, and color are configurable; it is hidden for the default playlist and untimed playlists.
+- A class progress bar tracks the active timed playlist from its start to end time. Its edge, height, and color are configurable; it is hidden for the default playlist and untimed playlists. Enable **Show time remaining (minutes:seconds)** in Widgets to display a countdown on the bar during both transitions and class periods. The timer is off by default and makes the bar at least 32 px tall when enabled.
 - A text ticker can run along the top or bottom with editable text and adjustable travel time.
 
 When the ticker and progress bar share an edge, Pi-Agenda stacks them automatically. Clocks are offset past either edge band, so enabled widgets do not cover one another. Widgets disappear whenever the display is blanked or scheduled off.
@@ -165,7 +165,7 @@ When the ticker and progress bar share an edge, Pi-Agenda stacks them automatica
 
 Pi-Agenda detects the active connector instead of assuming a fixed HDMI name. At an off boundary it blanks the player and requests HDMI/DPMS standby. This normally lets a television sleep, but it does not cut wall power.
 
-The Dashboard and Settings pages include a display blanking control for testing the complete player-blackout and HDMI-off path. Pi-Agenda disables the active XRandR output (or Raspberry Pi firmware display power fallback) and records the display as off only after a follow-up query confirms that the video signal is disabled. The television should report **No signal** or enter standby—not merely show a black image. Select **Restore display** (or **End test and resume schedule** in Settings) to re-enable the output and return control to the normal schedule. Display commands are reapplied after service restarts so a stale saved state cannot leave the HDMI signal active. If verification fails, inspect `sudo journalctl -u pi-agenda-worker --no-pager -n 100`.
+The Dashboard and Settings pages include a display blanking control for testing the complete player-blackout and HDMI-off path. Pi-Agenda disables the active XRandR output (or Raspberry Pi firmware display power fallback) and records the display as off only after a follow-up query confirms that the video signal is disabled. The television should report **No signal** or enter standby—not merely show a black image. Select **Restore display** (or **End test and resume schedule** in Settings) to re-enable the output and return control to the normal schedule. Display commands are reapplied after service restarts so a stale saved state cannot leave the HDMI signal active. If verification fails, inspect `sudo journalctl -u pi-agenda-supervisor --no-pager -n 100`.
 
 Holiday mode pauses every playlist and holds the display off for 1–365 days. It can be cancelled early from Settings.
 
@@ -195,10 +195,14 @@ The System page creates a consistent SQLite snapshot and includes original uploa
 
 ## Service management and logs
 
+Display scheduling and the kiosk watchdog run in `pi-agenda-supervisor`, independently of conversion jobs and morning website refreshes. Missing local heartbeats or a persistently unhealthy display trigger a kiosk restart with a five-minute retry cooldown. Remote displays cannot overwrite the local kiosk's health. The player bounds pending requests, releases outgoing media resources, and detects missed rotation deadlines and stopped animation frames.
+
+The kiosk and conversion worker share a media slice capped at 80% of physical RAM, leaving capacity for the OS and management services. Conversion jobs have an additional 60% cap and are preferred over the kiosk for termination under memory pressure. A terminated media service restarts automatically; failed conversions retain the previous verified content. Large conversions may therefore fail rather than exhaust the whole Pi. Install these service changes through the normal one-click update after merging, or run `sudo ./start.sh --repair` from the updated checkout.
+
 ```bash
-sudo systemctl status pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-kiosk
+sudo systemctl status pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-supervisor pi-agenda-kiosk
 sudo journalctl -u 'pi-agenda-*' --no-pager -n 200
-sudo systemctl restart pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-kiosk
+sudo systemctl restart pi-agenda-web pi-agenda-worker pi-agenda-cache pi-agenda-supervisor pi-agenda-kiosk
 ```
 
 Application data is stored under `/var/lib/pi-agenda`; installed code is under `/opt/pi-agenda`.

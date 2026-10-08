@@ -90,6 +90,7 @@ DEFAULT_SETTINGS = {
     "clock_widget_position": "top-right",
     "clock_widget_size": "48",
     "progress_widget_enabled": "0",
+    "progress_widget_show_timer": "0",
     "progress_widget_position": "bottom",
     "progress_widget_height": "8",
     "progress_widget_color": "#40c057",

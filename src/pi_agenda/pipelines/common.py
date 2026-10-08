@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import uuid
 from pathlib import Path
 
+import psutil
 from PIL import Image, ImageOps
 
 
@@ -42,15 +44,49 @@ def run_command(
     if env:
         merged_env.update(env)
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=cwd,
             env=merged_env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
-            timeout=timeout,
-            check=False,
+            start_new_session=os.name == "posix",
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Chromium and LibreOffice spawn descendants. Killing only their
+            # launcher leaves processes consuming RAM and holding pipes open.
+            try:
+                children = psutil.Process(process.pid).children(recursive=True)
+            except psutil.NoSuchProcess:
+                children = []
+            for child in reversed(children):
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            if os.name == "posix":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+                # An escaped descendant must not hold the worker indefinitely.
+                if process.stdout:
+                    process.stdout.close()
+                if process.stderr:
+                    process.stderr.close()
+            raise
+        result = subprocess.CompletedProcess(
+            command, process.returncode, stdout, stderr
         )
     except subprocess.TimeoutExpired as exc:
         raise PipelineError(f"Command timed out after {timeout} seconds") from exc

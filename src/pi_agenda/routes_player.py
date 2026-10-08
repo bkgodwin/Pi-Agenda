@@ -110,8 +110,16 @@ def playlist_now():
 @player_access_required
 def player_health():
     conn = get_db()
-    if request.method == "POST":
+    # A remote display must not mask a frozen local kiosk's missing heartbeat.
+    if request.method == "POST" and is_loopback_request():
         values = request.get_json(silent=True) or {}
+        session_id = str(values.get("session_id", ""))[:64]
+        if session_id and session_id != get_setting(conn, "player_session", ""):
+            set_setting(conn, "player_session", session_id)
+            # X11 may have restarted with the browser and restored an output
+            # that should be off. Reverify hardware even during overnight off.
+            set_setting(conn, "display_power_state", "unknown")
+            set_setting(conn, "display_power_pending_at", "")
         set_setting(conn, "player_heartbeat", utcnow())
         set_setting(
             conn, "player_visual_state", str(values.get("state", "playing"))[:32]
